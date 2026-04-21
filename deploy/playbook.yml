@@ -1,0 +1,53 @@
+---
+- name: Deploy NIC Watchdog Service
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    ethernet_interface: "eth0"
+    ping_target: "8.8.8.8"
+    cooldown_seconds: 600
+    soft_recover_max: 3
+    binary_src: "../bin/nic-watchdog"
+    binary_dest: "/usr/local/bin/nic-watchdog"
+    service_name: "nic-watchdog"
+  tasks:
+    - name: Deploy nic-watchdog binary
+      ansible.builtin.copy:
+        src: "{{ binary_src }}"
+        dest: "{{ binary_dest }}"
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart nic-watchdog
+
+    - name: Deploy nic-watchdog.service systemd unit
+      ansible.builtin.template:
+        src: nic-watchdog.service.j2
+        dest: "/etc/systemd/system/{{ service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd daemon
+        - Restart nic-watchdog
+
+    - name: Ensure systemd daemon is reloaded
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start nic-watchdog service
+      ansible.builtin.systemd:
+        name: "{{ service_name }}.service"
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart nic-watchdog
+      ansible.builtin.systemd:
+        name: "{{ service_name }}.service"
+        state: restarted

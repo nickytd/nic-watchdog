@@ -1,0 +1,55 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dogsled
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - goconst
+    - gocritic
+    - gocyclo
+    - godoclint
+    - govet
+    - ineffassign
+    - intrange
+    - misspell
+    - modernize
+    - nakedret
+    - nilerr
+    - noctx
+    - perfsprint
+    - prealloc
+    - predeclared
+    - revive
+    - sloglint
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+  settings:
+    gocyclo:
+      min-complexity: 15
+    nakedret:
+      max-func-lines: 30
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    misspell:
+      locale: US
+    exhaustive:
+      default-signifies-exhaustive: true
+    sloglint:
+      attr-only: false
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

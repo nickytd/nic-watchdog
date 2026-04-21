@@ -1,0 +1,24 @@
+[Unit]
+Description=NIC watchdog for RPi5 Ethernet link drops
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nic-watchdog \
+  --iface {{ ethernet_interface }} \
+  --ping-target {{ ping_target }} \
+  --cooldown {{ cooldown_seconds }}s \
+  --soft-max {{ soft_recover_max }}
+Restart=always
+RestartSec=5
+
+# Security
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/sys/class/net /run
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
