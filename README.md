@@ -1,5 +1,11 @@
 # nic-watchdog
 
+![CI](https://github.com/nickytd/nic-watchdog/actions/workflows/ci.yml/badge.svg)
+![Release](https://github.com/nickytd/nic-watchdog/actions/workflows/release.yml/badge.svg)
+![Go Version](https://img.shields.io/github/go-mod/go-version/nickytd/nic-watchdog)
+![License](https://img.shields.io/github/license/nickytd/nic-watchdog)
+![Latest Release](https://img.shields.io/github/v/release/nickytd/nic-watchdog)
+
 A lightweight Go daemon that monitors Ethernet connectivity on Raspberry Pi nodes and automatically recovers from spontaneous link drops caused by known hardware bugs in the Ethernet PHY.
 
 ## Problem
