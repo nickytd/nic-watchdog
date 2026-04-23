@@ -83,20 +83,22 @@ func TestParseHexIP(t *testing.T) {
 
 func TestParseRouteTable(t *testing.T) {
 	tests := []struct {
-		name      string
-		iface     string
-		data      string
-		wantGW    string
-		wantIface string
-		wantErr   bool
+		name        string
+		iface       string
+		data        string
+		wantGW      string
+		wantIface   string
+		wantRouteIf string
+		wantErr     bool
 	}{
 		{
 			name:  "single default route",
 			iface: "eth0",
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:    "192.168.1.1",
-			wantIface: "eth0",
+			wantGW:      "192.168.1.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0",
 		},
 		{
 			name:  "multiple routes picks default",
@@ -104,8 +106,9 @@ func TestParseRouteTable(t *testing.T) {
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:    "192.168.1.1",
-			wantIface: "eth0",
+			wantGW:      "192.168.1.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0",
 		},
 		{
 			name:  "wrong interface ignored",
@@ -139,16 +142,18 @@ func TestParseRouteTable(t *testing.T) {
 			iface: "eth0",
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0100000A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:    "10.0.0.1",
-			wantIface: "eth0",
+			wantGW:      "10.0.0.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0",
 		},
 		{
 			name:  "VLAN sub-interface matches base iface",
 			iface: "eth0",
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0.1\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-			wantGW:    "192.168.0.1",
-			wantIface: "eth0.1",
+			wantGW:      "192.168.0.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0.1",
 		},
 		{
 			name:  "VLAN sub-interface with higher ID",
@@ -156,14 +161,49 @@ func TestParseRouteTable(t *testing.T) {
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0.100\t00000A0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n" +
 				"eth0.1\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-			wantGW:    "192.168.0.1",
-			wantIface: "eth0.1",
+			wantGW:      "192.168.0.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0.1",
 		},
 		{
 			name:  "different base iface does not match VLAN",
 			iface: "eth1",
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0.1\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+			wantErr: true,
+		},
+		{
+			name:  "auto-detect picks first default route",
+			iface: "",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"end0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.1.1",
+			wantIface:   "end0",
+			wantRouteIf: "end0",
+		},
+		{
+			name:  "auto-detect with VLAN extracts base iface",
+			iface: "",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"end0.100\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.0.1",
+			wantIface:   "end0",
+			wantRouteIf: "end0.100",
+		},
+		{
+			name:  "auto-detect skips non-default routes",
+			iface: "",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n" +
+				"wlan0\t00000000\t0201A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.1.2",
+			wantIface:   "wlan0",
+			wantRouteIf: "wlan0",
+		},
+		{
+			name:    "auto-detect empty table",
+			iface:   "",
+			data:    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n",
 			wantErr: true,
 		},
 	}
@@ -184,8 +224,11 @@ func TestParseRouteTable(t *testing.T) {
 			if got.gateway != tt.wantGW {
 				t.Errorf("gateway = %q, want %q", got.gateway, tt.wantGW)
 			}
-			if got.routeIface != tt.wantIface {
-				t.Errorf("routeIface = %q, want %q", got.routeIface, tt.wantIface)
+			if got.iface != tt.wantIface {
+				t.Errorf("iface = %q, want %q", got.iface, tt.wantIface)
+			}
+			if got.routeIface != tt.wantRouteIf {
+				t.Errorf("routeIface = %q, want %q", got.routeIface, tt.wantRouteIf)
 			}
 		})
 	}

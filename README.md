@@ -44,7 +44,7 @@ Flags:
       --check-interval duration   Check interval (default 10s)
       --cooldown duration         Minimum time between full interface cycles (default 10m0s)
       --gateway string            Gateway IP (auto-detected if empty)
-      --iface string              Network interface (default "eth0")
+      --iface string              Network interface (auto-detected from default route if empty)
       --ping-target string        External connectivity check target (default "8.8.8.8")
       --soft-max int              Max soft recovery attempts before escalating (default 3)
 ```
@@ -95,7 +95,7 @@ Runs as `Type=simple` with `Restart=always`. Requires `CAP_NET_ADMIN` (interface
 ```ini
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nic-watchdog --iface eth0 --ping-target 8.8.8.8 --cooldown 600s --soft-max 3
+ExecStart=/usr/local/bin/nic-watchdog --ping-target 8.8.8.8 --cooldown 600s --soft-max 3
 Restart=always
 RestartSec=5
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
@@ -104,8 +104,8 @@ AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 ## Journal output
 
 ```
-level=INFO msg="discovered gateway" gateway=192.168.1.1
-level=INFO msg="watchdog started" iface=eth0 target=8.8.8.8 gateway=192.168.1.1 interval=10s
+level=INFO msg="discovered gateway" gateway=192.168.1.1 iface=eth0 routeIface=eth0
+level=INFO msg="watchdog started" iface=eth0 routeIface=eth0 target=8.8.8.8 gateway=192.168.1.1 interval=10s
 level=INFO msg="external unreachable, gateway up — flushing ARP and routes" gateway=192.168.1.1 attempt=1
 level=INFO msg="external connectivity restored" after_soft_attempts=1
 level=INFO msg="cycling interface" iface=eth0 gateway=192.168.1.1 target=8.8.8.8

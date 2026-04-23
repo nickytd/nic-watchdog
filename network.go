@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -73,6 +74,7 @@ func ping(ctx context.Context, addr string, timeout time.Duration) bool {
 
 type routeInfo struct {
 	gateway    string
+	iface      string
 	routeIface string
 }
 
@@ -84,7 +86,9 @@ func discoverGateway(iface string) (routeInfo, error) {
 	return parseRouteTable(string(data), iface)
 }
 
-// parseRouteTable finds the default gateway on iface or any VLAN sub-interface (iface.NNN).
+// parseRouteTable finds the default gateway. When iface is non-empty, only
+// routes on that interface (or its VLAN sub-interfaces) are considered.
+// When iface is empty, the first default route on any interface is used.
 func parseRouteTable(data, iface string) (routeInfo, error) {
 	prefix := iface + "."
 	for _, line := range strings.Split(data, "\n")[1:] {
@@ -92,7 +96,7 @@ func parseRouteTable(data, iface string) (routeInfo, error) {
 		if len(fields) < 4 {
 			continue
 		}
-		if fields[0] != iface && !strings.HasPrefix(fields[0], prefix) {
+		if iface != "" && fields[0] != iface && !strings.HasPrefix(fields[0], prefix) {
 			continue
 		}
 		// Destination 00000000 = default route; flags: RTF_UP (0x1) + RTF_GATEWAY (0x2)
@@ -105,10 +109,22 @@ func parseRouteTable(data, iface string) (routeInfo, error) {
 			if err != nil {
 				return routeInfo{}, fmt.Errorf("parse gateway: %w", err)
 			}
-			return routeInfo{gateway: gw, routeIface: fields[0]}, nil
+			ri := routeInfo{
+				gateway:    gw,
+				routeIface: fields[0],
+			}
+			if iface != "" {
+				ri.iface = iface
+			} else {
+				ri.iface, _, _ = strings.Cut(fields[0], ".")
+			}
+			return ri, nil
 		}
 	}
-	return routeInfo{}, fmt.Errorf("no default route on %s", iface)
+	if iface != "" {
+		return routeInfo{}, fmt.Errorf("no default route on %s", iface)
+	}
+	return routeInfo{}, errors.New("no default route found")
 }
 
 func parseHexIP(hex string) (string, error) {

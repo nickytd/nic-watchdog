@@ -6,7 +6,6 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/nic-watchdog \
-  --iface {{ ethernet_interface }} \
   --ping-target {{ ping_target }} \
   --cooldown {{ cooldown_seconds }}s \
   --soft-max {{ soft_recover_max }}

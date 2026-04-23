@@ -4,7 +4,6 @@
   become: true
   gather_facts: false
   vars:
-    ethernet_interface: "eth0"
     ping_target: "8.8.8.8"
     cooldown_seconds: 600
     soft_recover_max: 3

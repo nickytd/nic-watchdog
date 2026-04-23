@@ -45,8 +45,12 @@ func (w *Watchdog) Run(ctx context.Context) error {
 		}
 		w.gateway = ri.gateway
 		w.routeIface = ri.routeIface
+		if w.iface == "" {
+			w.iface = ri.iface
+		}
 		w.log.Info("discovered gateway",
 			slog.String("gateway", w.gateway),
+			slog.String("iface", w.iface),
 			slog.String("routeIface", w.routeIface),
 		)
 	}

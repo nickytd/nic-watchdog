@@ -29,9 +29,6 @@ type Config struct {
 }
 
 func (c Config) validate() error {
-	if c.Iface == "" {
-		return errors.New("iface must not be empty")
-	}
 	if c.PingTarget == "" {
 		return errors.New("ping-target must not be empty")
 	}
@@ -55,7 +52,7 @@ func main() {
 	}
 
 	flags := rootCmd.Flags()
-	flags.String("iface", "eth0", "network interface")
+	flags.String("iface", "", "network interface (auto-detected from default route if empty)")
 	flags.String("ping-target", "8.8.8.8", "external connectivity check target")
 	flags.String("gateway", "", "gateway IP (auto-detected if empty)")
 	flags.Duration("check-interval", 10*time.Second, "check interval")
