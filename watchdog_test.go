@@ -4,10 +4,50 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"testing"
 	"time"
 )
+
+// fakeRecoverer records each call site so tests can assert which step the
+// state machine took. Per-call errors can be injected via the *Err fields.
+type fakeRecoverer struct {
+	flushCalls    int
+	restartCalls  int
+	cycleCalls    int
+	flushErr      error
+	restartErr    error
+	cycleErr      error
+	flushIface    string
+	cycleIface    string
+	cycleDownWait time.Duration
+}
+
+func (f *fakeRecoverer) flush(_ context.Context, iface string) error {
+	f.flushCalls++
+	f.flushIface = iface
+	return f.flushErr
+}
+
+func (f *fakeRecoverer) restartNetworkd(_ context.Context) error {
+	f.restartCalls++
+	return f.restartErr
+}
+
+func (f *fakeRecoverer) cycle(_ context.Context, iface string, downWait time.Duration) error {
+	f.cycleCalls++
+	f.cycleIface = iface
+	f.cycleDownWait = downWait
+	return f.cycleErr
+}
+
+// silentLogger discards output so tests don't leak log lines into go test -v.
+func silentLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestNewWatchdog(t *testing.T) {
 	cfg := Config{
@@ -18,9 +58,8 @@ func TestNewWatchdog(t *testing.T) {
 		Cooldown:      3 * time.Minute,
 		SoftMax:       5,
 	}
-	logger := slog.Default()
 
-	w := NewWatchdog(cfg, logger)
+	w := NewWatchdog(cfg, silentLogger())
 
 	if w.iface != cfg.Iface {
 		t.Errorf("iface = %q, want %q", w.iface, cfg.Iface)
@@ -46,61 +85,118 @@ func TestNewWatchdog(t *testing.T) {
 	if !w.lastCycle.IsZero() {
 		t.Errorf("lastCycle = %v, want zero", w.lastCycle)
 	}
-}
-
-func TestFullCycleCooldown(t *testing.T) {
-	w := &Watchdog{
-		cooldown: 10 * time.Minute,
-		log:      slog.Default(),
-	}
-
-	if !w.lastCycle.IsZero() {
-		t.Fatal("lastCycle should be zero initially")
-	}
-
-	w.lastCycle = time.Now()
-
-	elapsed := time.Since(w.lastCycle)
-	if elapsed >= w.cooldown {
-		t.Fatal("test setup: elapsed should be less than cooldown")
-	}
-
-	cooldownActive := !w.lastCycle.IsZero() && time.Since(w.lastCycle) < w.cooldown
-	if !cooldownActive {
-		t.Error("cooldown should be active immediately after a cycle")
+	if w.rec == nil {
+		t.Error("rec is nil; expected default osRecoverer")
 	}
 }
 
-func TestSoftRecoverEscalation(t *testing.T) {
+// TestSoftRecoverDispatch exercises the actual softRecover state machine
+// against a fake recoverer — the previous version of this test re-implemented
+// the switch in the test body, which would stay green even if softRecover
+// were deleted.
+func TestSoftRecoverDispatch(t *testing.T) {
 	tests := []struct {
-		name      string
-		softCount int
-		softMax   int
-		wantPhase string
+		name         string
+		softCount    int
+		softMax      int
+		wantFlush    int
+		wantRestart  int
+		wantCycle    int
+		wantSoftZero bool
 	}{
-		{"first attempt flushes ARP", 1, 3, "flush"},
-		{"second attempt restarts networkd", 2, 3, "networkd"},
-		{"at softMax escalates to full cycle", 3, 3, "full"},
-		{"above softMax escalates to full cycle", 5, 3, "full"},
-		{"intermediate does nothing", 0, 3, "none"},
+		{name: "first attempt flushes ARP", softCount: 1, softMax: 3, wantFlush: 1},
+		{name: "second attempt restarts networkd", softCount: 2, softMax: 3, wantRestart: 1},
+		{name: "at softMax escalates to full cycle", softCount: 3, softMax: 3, wantCycle: 1, wantSoftZero: true},
+		{name: "above softMax also escalates", softCount: 5, softMax: 3, wantCycle: 1, wantSoftZero: true},
+		{name: "zero softCount is a no-op", softCount: 0, softMax: 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var phase string
-			switch {
-			case tt.softCount == 1:
-				phase = "flush"
-			case tt.softCount == 2:
-				phase = "networkd"
-			case tt.softCount >= tt.softMax:
-				phase = "full"
-			default:
-				phase = "none"
+			fake := &fakeRecoverer{}
+			w := &Watchdog{
+				iface:        "eth0",
+				routeIface:   "eth0",
+				gateway:      "10.0.0.1",
+				cooldown:     time.Hour, // suppress fullCycle's actual call to rec.cycle? no — cooldown gate uses lastCycle, which is zero
+				softMax:      tt.softMax,
+				linkDownWait: time.Millisecond,
+				rec:          fake,
+				log:          silentLogger(),
+				softCount:    tt.softCount,
 			}
-			if phase != tt.wantPhase {
-				t.Errorf("phase = %q, want %q", phase, tt.wantPhase)
+
+			w.softRecover(context.Background())
+
+			if fake.flushCalls != tt.wantFlush {
+				t.Errorf("flush calls = %d, want %d", fake.flushCalls, tt.wantFlush)
+			}
+			if fake.restartCalls != tt.wantRestart {
+				t.Errorf("restart calls = %d, want %d", fake.restartCalls, tt.wantRestart)
+			}
+			if fake.cycleCalls != tt.wantCycle {
+				t.Errorf("cycle calls = %d, want %d", fake.cycleCalls, tt.wantCycle)
+			}
+			if tt.wantSoftZero && w.softCount != 0 {
+				t.Errorf("softCount = %d, want 0 after escalation", w.softCount)
 			}
 		})
+	}
+}
+
+func TestFullCycleCooldown(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := &Watchdog{
+		iface:        "eth0",
+		cooldown:     10 * time.Minute,
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		log:          silentLogger(),
+		lastCycle:    time.Now(), // cycle just ran; cooldown is active
+	}
+
+	w.fullCycle(context.Background())
+
+	if fake.cycleCalls != 0 {
+		t.Errorf("cycle was called during cooldown (calls=%d)", fake.cycleCalls)
+	}
+}
+
+func TestFullCycleAllowsAfterCooldown(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := &Watchdog{
+		iface:        "eth0",
+		gateway:      "10.0.0.1",
+		pingTarget:   "192.0.2.1", // unreachable, post-cycle ping returns false
+		cooldown:     10 * time.Millisecond,
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		log:          silentLogger(),
+		lastCycle:    time.Now().Add(-time.Hour), // cooldown elapsed long ago
+	}
+
+	w.fullCycle(t.Context())
+
+	if fake.cycleCalls != 1 {
+		t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
+	}
+	if fake.cycleIface != "eth0" {
+		t.Errorf("cycle iface = %q, want eth0", fake.cycleIface)
+	}
+}
+
+func TestFullCycleCycleErrorRecorded(t *testing.T) {
+	fake := &fakeRecoverer{cycleErr: errors.New("boom")}
+	w := &Watchdog{
+		iface:        "eth0",
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		log:          silentLogger(),
+	}
+
+	w.fullCycle(t.Context())
+
+	if fake.cycleCalls != 1 {
+		t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
 	}
 }

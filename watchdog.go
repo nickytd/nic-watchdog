@@ -9,6 +9,29 @@ import (
 	"time"
 )
 
+// recoverer performs the OS-level recovery actions. The default implementation
+// (osRecoverer) shells out to ip / systemctl; tests substitute a fake to
+// observe the state machine without touching the host.
+type recoverer interface {
+	flush(ctx context.Context, iface string) error
+	restartNetworkd(ctx context.Context) error
+	cycle(ctx context.Context, iface string, downWait time.Duration) error
+}
+
+type osRecoverer struct{}
+
+func (osRecoverer) flush(ctx context.Context, iface string) error {
+	return flushARPAndRoutes(ctx, iface)
+}
+
+func (osRecoverer) restartNetworkd(ctx context.Context) error {
+	return restartNetworkd(ctx)
+}
+
+func (osRecoverer) cycle(ctx context.Context, iface string, downWait time.Duration) error {
+	return cycleInterface(ctx, iface, downWait)
+}
+
 type Watchdog struct {
 	iface         string
 	routeIface    string
@@ -18,6 +41,8 @@ type Watchdog struct {
 	cooldown      time.Duration
 	softMax       int
 	linkDownWait  time.Duration
+
+	rec recoverer
 
 	softCount int
 	lastCycle time.Time
@@ -33,6 +58,7 @@ func NewWatchdog(cfg Config, logger *slog.Logger) *Watchdog {
 		cooldown:      cfg.Cooldown,
 		softMax:       cfg.SoftMax,
 		linkDownWait:  5 * time.Second,
+		rec:           osRecoverer{},
 		log:           logger,
 	}
 }
@@ -115,7 +141,7 @@ func (w *Watchdog) softRecover(ctx context.Context) {
 			slog.String("gateway", w.gateway),
 			slog.Int("attempt", w.softCount),
 		)
-		if err := flushARPAndRoutes(ctx, w.routeIface); err != nil {
+		if err := w.rec.flush(ctx, w.routeIface); err != nil {
 			w.log.Error("flush failed", slog.String("error", err.Error()))
 		}
 
@@ -123,7 +149,7 @@ func (w *Watchdog) softRecover(ctx context.Context) {
 		w.log.Info("external still unreachable — restarting systemd-networkd",
 			slog.Int("attempt", w.softCount),
 		)
-		if err := restartNetworkd(ctx); err != nil {
+		if err := w.rec.restartNetworkd(ctx); err != nil {
 			w.log.Error("networkd restart failed", slog.String("error", err.Error()))
 		}
 
@@ -153,7 +179,7 @@ func (w *Watchdog) fullCycle(ctx context.Context) {
 	)
 	w.lastCycle = time.Now()
 
-	if err := cycleInterface(ctx, w.iface, w.linkDownWait); err != nil {
+	if err := w.rec.cycle(ctx, w.iface, w.linkDownWait); err != nil {
 		w.log.Error("cycle failed", slog.String("error", err.Error()))
 		return
 	}
