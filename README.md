@@ -90,7 +90,7 @@ The playbook (`deploy/playbook.yml`) targets `pis`, `deskpis`, and `turingpis` h
 
 ## Systemd service
 
-Runs as `Type=simple` with `Restart=always`. Requires `CAP_NET_ADMIN` (interface cycling) and `CAP_NET_RAW` (ICMP ping).
+Runs as `Type=simple` with `Restart=always`. Requires `CAP_NET_ADMIN` for interface cycling and ARP/route flush. ICMP probes use the Linux unprivileged datagram socket (`IPPROTO_ICMP`), gated by `net.ipv4.ping_group_range` — open by default on Debian / Raspberry Pi OS, so no `CAP_NET_RAW` is needed.
 
 ```ini
 [Service]
@@ -98,7 +98,7 @@ Type=simple
 ExecStart=/usr/local/bin/nic-watchdog --ping-target 8.8.8.8 --cooldown 600s --soft-max 3
 Restart=always
 RestartSec=5
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN
 ```
 
 ## Journal output

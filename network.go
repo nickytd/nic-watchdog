@@ -13,14 +13,24 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
 
+// pingSeq supplies a unique 16-bit sequence number per ping call, so concurrent
+// or back-to-back pings on the shared ICMP socket can't accept each other's
+// replies. The kernel rewrites the Echo ID to the socket's ephemeral source
+// port on "udp4" mode, so Seq is the only field we control end-to-end.
+var pingSeq atomic.Uint32
+
 func ping(ctx context.Context, addr string, timeout time.Duration) bool {
-	conn, err := icmp.ListenPacket("ip4:icmp", "")
+	// "udp4" uses Linux unprivileged ICMP (IPPROTO_ICMP datagram socket) —
+	// gated by net.ipv4.ping_group_range, open by default on Debian/Pi OS.
+	// Avoids needing CAP_NET_RAW.
+	conn, err := icmp.ListenPacket("udp4", "")
 	if err != nil {
 		return false
 	}
@@ -31,12 +41,16 @@ func ping(ctx context.Context, addr string, timeout time.Duration) bool {
 		return false
 	}
 
+	seq := int(pingSeq.Add(1) & 0xffff)
+
 	msg := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Code: 0,
 		Body: &icmp.Echo{
-			ID:   os.Getpid() & 0xffff,
-			Seq:  1,
+			// ID is overwritten by the kernel to the source port on "udp4";
+			// reply matching is on Seq only.
+			ID:   0,
+			Seq:  seq,
 			Data: []byte("watchdog"),
 		},
 	}
@@ -53,23 +67,48 @@ func ping(ctx context.Context, addr string, timeout time.Duration) bool {
 		return false
 	}
 
-	if _, err := conn.WriteTo(b, dst); err != nil {
+	// On "udp4" mode, WriteTo expects a *net.UDPAddr; the port is unused.
+	if _, err := conn.WriteTo(b, &net.UDPAddr{IP: dst.IP}); err != nil {
 		return false
 	}
 
 	reply := make([]byte, 1500)
 	for {
-		n, _, err := conn.ReadFrom(reply)
+		n, peer, err := conn.ReadFrom(reply)
 		if err != nil {
 			return false
+		}
+		if !peerMatches(peer, dst.IP) {
+			continue
 		}
 		rm, err := icmp.ParseMessage(1, reply[:n])
 		if err != nil {
-			return false
+			continue
 		}
-		if rm.Type == ipv4.ICMPTypeEchoReply {
+		if rm.Type != ipv4.ICMPTypeEchoReply {
+			continue
+		}
+		echo, ok := rm.Body.(*icmp.Echo)
+		if !ok {
+			continue
+		}
+		if echo.Seq == seq {
 			return true
 		}
+	}
+}
+
+// peerMatches reports whether the source address of an ICMP reply is the host
+// we sent the echo to. On "udp4" mode the peer arrives as *net.UDPAddr;
+// "ip4:icmp" mode would surface *net.IPAddr.
+func peerMatches(peer net.Addr, want net.IP) bool {
+	switch p := peer.(type) {
+	case *net.UDPAddr:
+		return p.IP.Equal(want)
+	case *net.IPAddr:
+		return p.IP.Equal(want)
+	default:
+		return false
 	}
 }
 
