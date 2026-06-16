@@ -7,6 +7,7 @@
     ping_target: "8.8.8.8"
     cooldown_seconds: 600
     soft_recover_max: 3
+    metrics_addr: ""  # e.g. ":9101" to enable Prometheus scraping; empty disables.
     binary_src: "../bin/nic-watchdog"
     binary_dest: "/usr/local/bin/nic-watchdog"
     service_name: "nic-watchdog"
