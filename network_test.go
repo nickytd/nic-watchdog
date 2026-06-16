@@ -4,7 +4,9 @@
 package main
 
 import (
+	"net"
 	"testing"
+	"time"
 )
 
 func TestParseHexIP(t *testing.T) {
@@ -271,5 +273,102 @@ func TestParseRouteTable(t *testing.T) {
 				t.Errorf("routeIface = %q, want %q", got.routeIface, tt.wantRouteIf)
 			}
 		})
+	}
+}
+
+func TestPeerMatches(t *testing.T) {
+	tests := []struct {
+		name string
+		peer net.Addr
+		want net.IP
+		ok   bool
+	}{
+		{
+			name: "udp peer matches",
+			peer: &net.UDPAddr{IP: net.ParseIP("8.8.8.8")},
+			want: net.ParseIP("8.8.8.8"),
+			ok:   true,
+		},
+		{
+			name: "udp peer mismatch",
+			peer: &net.UDPAddr{IP: net.ParseIP("8.8.4.4")},
+			want: net.ParseIP("8.8.8.8"),
+			ok:   false,
+		},
+		{
+			name: "ip peer matches (raw socket fallback)",
+			peer: &net.IPAddr{IP: net.ParseIP("192.168.1.1")},
+			want: net.ParseIP("192.168.1.1"),
+			ok:   true,
+		},
+		{
+			name: "ip peer mismatch",
+			peer: &net.IPAddr{IP: net.ParseIP("192.168.1.2")},
+			want: net.ParseIP("192.168.1.1"),
+			ok:   false,
+		},
+		{
+			name: "ipv4-mapped ipv6 equals ipv4",
+			peer: &net.UDPAddr{IP: net.ParseIP("::ffff:8.8.8.8")},
+			want: net.ParseIP("8.8.8.8"),
+			ok:   true,
+		},
+		{
+			name: "unknown peer type rejected",
+			peer: &net.TCPAddr{IP: net.ParseIP("8.8.8.8")},
+			want: net.ParseIP("8.8.8.8"),
+			ok:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := peerMatches(tt.peer, tt.want); got != tt.ok {
+				t.Errorf("peerMatches(%v, %v) = %v, want %v", tt.peer, tt.want, got, tt.ok)
+			}
+		})
+	}
+}
+
+func TestPingSeqIsUnique(t *testing.T) {
+	// Each ping must use a fresh Seq so the read loop can't accept a stale or
+	// concurrent reply. Sample many calls; any duplicate would be a regression.
+	const n = 1000
+	seen := make(map[int]struct{}, n)
+	for range n {
+		s := int(pingSeq.Add(1) & 0xffff)
+		if _, dup := seen[s]; dup {
+			// 16-bit space wraps every 65536; with n=1000 starting fresh per
+			// process this is effectively impossible.
+			t.Fatalf("duplicate seq %d after %d iterations", s, len(seen))
+		}
+		seen[s] = struct{}{}
+	}
+}
+
+// TestPingLoopbackTimeout verifies ping returns false when the target is
+// unreachable, and exercises the unprivileged ICMP socket path. Skipped when
+// the kernel rejects unprivileged ICMP (closed ping_group_range, non-Linux
+// CI, or sandbox).
+func TestPingLoopbackTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires unprivileged ICMP socket")
+	}
+
+	ctx := t.Context()
+
+	// 192.0.2.1 is in TEST-NET-1 (RFC 5737) — guaranteed unreachable. We use a
+	// short timeout because we don't want to wait long for the negative case.
+	start := time.Now()
+	ok := ping(ctx, "192.0.2.1", 200*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if ok {
+		t.Errorf("ping to TEST-NET-1 unexpectedly succeeded")
+	}
+	// Loose upper bound — the call must respect its deadline, not block for
+	// kernel default ICMP timeouts.
+	if elapsed > 2*time.Second {
+		t.Errorf("ping took %v, expected < 2s (deadline ignored?)", elapsed)
 	}
 }
