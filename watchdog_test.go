@@ -9,6 +9,9 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // fakeRecoverer records each call site so tests can assert which step the
@@ -121,6 +124,7 @@ func TestSoftRecoverDispatch(t *testing.T) {
 				softMax:      tt.softMax,
 				linkDownWait: time.Millisecond,
 				rec:          fake,
+				m:            newMetrics(),
 				log:          silentLogger(),
 				softCount:    tt.softCount,
 			}
@@ -161,6 +165,7 @@ func TestSoftRecoverPreservesCountWhenCycleSuppressed(t *testing.T) {
 		softMax:      3,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
+		m:            newMetrics(),
 		log:          silentLogger(),
 		softCount:    3,
 		lastCycle:    time.Now(), // cycle just ran; cooldown is active
@@ -195,6 +200,7 @@ func TestFullCycleCooldown(t *testing.T) {
 		cooldown:     10 * time.Minute,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
+		m:            newMetrics(),
 		log:          silentLogger(),
 		lastCycle:    time.Now(), // cycle just ran; cooldown is active
 	}
@@ -215,6 +221,7 @@ func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 		cooldown:     10 * time.Millisecond,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
+		m:            newMetrics(),
 		log:          silentLogger(),
 		lastCycle:    time.Now().Add(-time.Hour), // cooldown elapsed long ago
 	}
@@ -240,6 +247,7 @@ func TestFullCycleCycleErrorRecorded(t *testing.T) {
 		iface:        "eth0",
 		linkDownWait: time.Millisecond,
 		rec:          fake,
+		m:            newMetrics(),
 		log:          silentLogger(),
 	}
 
@@ -262,6 +270,7 @@ func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
 		cooldown:     time.Millisecond,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
+		m:            newMetrics(),
 		log:          silentLogger(),
 	}
 
@@ -274,5 +283,95 @@ func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
 
 	if elapsed > 500*time.Millisecond {
 		t.Errorf("fullCycle took %v after pre-canceled ctx, expected near-immediate return", elapsed)
+	}
+}
+
+// counterValue reads a counter's current value through the prometheus
+// testutil-style path without pulling the package in.
+func counterValue(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		t.Fatalf("counter Write: %v", err)
+	}
+	return m.GetCounter().GetValue()
+}
+
+func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := g.Write(&m); err != nil {
+		t.Fatalf("gauge Write: %v", err)
+	}
+	return m.GetGauge().GetValue()
+}
+
+// TestMetricsInstrumentation verifies recovery counters and the soft-attempts
+// gauge advance as the state machine runs through its rungs. Pinned because
+// dashboards and alerts depend on these names.
+func TestMetricsInstrumentation(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := &Watchdog{
+		iface:        "eth0",
+		routeIface:   "eth0",
+		gateway:      "10.0.0.1",
+		pingTarget:   "192.0.2.1",
+		cooldown:     time.Millisecond,
+		softMax:      3,
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		m:            newMetrics(),
+		log:          silentLogger(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// First soft attempt → flush counter == 1.
+	w.softCount = 1
+	w.softRecover(ctx)
+	if got := counterValue(t, w.m.recoveryTotal.WithLabelValues("flush")); got != 1 {
+		t.Errorf("recovery_total{step=flush} = %v, want 1", got)
+	}
+
+	// Second attempt → networkd_restart counter == 1.
+	w.softCount = 2
+	w.softRecover(ctx)
+	if got := counterValue(t, w.m.recoveryTotal.WithLabelValues("networkd_restart")); got != 1 {
+		t.Errorf("recovery_total{step=networkd_restart} = %v, want 1", got)
+	}
+
+	// At softMax → cycle counter increments via fullCycle.
+	w.softCount = 3
+	w.softRecover(ctx)
+	if got := counterValue(t, w.m.recoveryTotal.WithLabelValues("cycle")); got != 1 {
+		t.Errorf("recovery_total{step=cycle} = %v, want 1", got)
+	}
+	if got := gaugeValue(t, w.m.lastCycleTimestamp); got == 0 {
+		t.Errorf("last_cycle_timestamp = %v, want non-zero after fullCycle ran", got)
+	}
+}
+
+// TestMetricsRecoveryFailure verifies the failure counter tracks errors from
+// the recoverer separately from the success counter.
+func TestMetricsRecoveryFailure(t *testing.T) {
+	fake := &fakeRecoverer{flushErr: errors.New("boom")}
+	w := &Watchdog{
+		routeIface: "eth0",
+		gateway:    "10.0.0.1",
+		softMax:    3,
+		rec:        fake,
+		m:          newMetrics(),
+		log:        silentLogger(),
+		softCount:  1,
+	}
+
+	w.softRecover(context.Background())
+
+	if got := counterValue(t, w.m.recoveryTotal.WithLabelValues("flush")); got != 1 {
+		t.Errorf("recovery_total{step=flush} = %v, want 1 (the attempt is counted regardless)", got)
+	}
+	if got := counterValue(t, w.m.recoveryFailureTot.WithLabelValues("flush")); got != 1 {
+		t.Errorf("recovery_failure_total{step=flush} = %v, want 1", got)
 	}
 }
