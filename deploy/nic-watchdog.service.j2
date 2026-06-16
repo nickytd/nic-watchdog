@@ -8,7 +8,9 @@ Type=simple
 ExecStart=/usr/local/bin/nic-watchdog \
   --ping-target {{ ping_target }} \
   --cooldown {{ cooldown_seconds }}s \
-  --soft-max {{ soft_recover_max }}
+  --soft-max {{ soft_recover_max }}{% if metrics_addr %} \
+  --metrics-addr {{ metrics_addr }}{% endif %}
+
 Restart=always
 RestartSec=5
 

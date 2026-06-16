@@ -45,6 +45,7 @@ Flags:
       --cooldown duration         Minimum time between full interface cycles (default 10m0s)
       --gateway string            Gateway IP (auto-detected if empty)
       --iface string              Network interface (auto-detected from default route if empty)
+      --metrics-addr string       Address to serve Prometheus /metrics on (e.g. :9101); empty disables
       --ping-target string        External connectivity check target (default "8.8.8.8")
       --soft-max int              Max soft recovery attempts before escalating (default 3)
 ```
@@ -110,6 +111,45 @@ level=INFO msg="external unreachable, gateway up — flushing ARP and routes" ga
 level=INFO msg="external connectivity restored" after_soft_attempts=1
 level=INFO msg="cycling interface" iface=eth0 gateway=192.168.1.1 target=8.8.8.8
 level=INFO msg="connectivity restored after cycle"
+```
+
+## Metrics
+
+Prometheus metrics are off by default. Enable with `--metrics-addr` (or `metrics_addr` in the playbook):
+
+```bash
+nic-watchdog --metrics-addr :9101
+```
+
+Exposed series (excerpt — see `/metrics` for the full set, including free `go_*` and `process_*` collectors):
+
+| Metric | Type | Labels | Notes |
+|---|---|---|---|
+| `nic_watchdog_external_reachable` | gauge | `target` | Primary alerting signal |
+| `nic_watchdog_gateway_reachable` | gauge | `gateway` | Distinguishes link-down from PHY TX failure |
+| `nic_watchdog_carrier_up` | gauge | `iface` | Cable / PHY presence |
+| `nic_watchdog_check_total` | counter | `result` | `ok` / `external_down` / `gateway_recovered_on_retry` / `both_down` |
+| `nic_watchdog_recovery_total` | counter | `step` | `flush` / `networkd_restart` / `cycle` |
+| `nic_watchdog_recovery_failure_total` | counter | `step` | Errors from each recovery step |
+| `nic_watchdog_soft_attempts` | gauge | — | Current soft counter |
+| `nic_watchdog_last_cycle_timestamp_seconds` | gauge | — | Unix time of the last full cycle |
+| `nic_watchdog_ping_duration_seconds` | histogram | `target`, `result` | Latency spikes correlate with PHY soft failures |
+
+Minimal Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: nic-watchdog
+    static_configs:
+      - targets: ['turingpi01:9101', 'turingpi02:9101']
+```
+
+A useful starter alert:
+
+```yaml
+- alert: NICWatchdogExternalDown
+  expr: nic_watchdog_external_reachable == 0
+  for: 2m
 ```
 
 ## License

@@ -26,6 +26,7 @@ type Config struct {
 	CheckInterval time.Duration
 	Cooldown      time.Duration
 	SoftMax       int
+	MetricsAddr   string
 }
 
 func (c Config) validate() error {
@@ -58,6 +59,7 @@ func main() {
 	flags.Duration("check-interval", 10*time.Second, "check interval")
 	flags.Duration("cooldown", 10*time.Minute, "minimum time between full interface cycles")
 	flags.Int("soft-max", 3, "max soft recovery attempts before escalating")
+	flags.String("metrics-addr", "", "address to serve Prometheus /metrics on (e.g. :9101); empty disables")
 
 	viper.SetEnvPrefix("NIC_WATCHDOG")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
@@ -77,6 +79,7 @@ func run(_ *cobra.Command, _ []string) error {
 		CheckInterval: viper.GetDuration("check-interval"),
 		Cooldown:      viper.GetDuration("cooldown"),
 		SoftMax:       viper.GetInt("soft-max"),
+		MetricsAddr:   viper.GetString("metrics-addr"),
 	}
 
 	if err := cfg.validate(); err != nil {
