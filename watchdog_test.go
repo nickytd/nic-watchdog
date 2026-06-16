@@ -118,7 +118,8 @@ func TestSoftRecoverDispatch(t *testing.T) {
 				iface:        "eth0",
 				routeIface:   "eth0",
 				gateway:      "10.0.0.1",
-				cooldown:     time.Hour, // suppress fullCycle's actual call to rec.cycle? no — cooldown gate uses lastCycle, which is zero
+				pingTarget:   "192.0.2.1",
+				cooldown:     time.Millisecond,
 				softMax:      tt.softMax,
 				linkDownWait: time.Millisecond,
 				rec:          fake,
@@ -126,7 +127,12 @@ func TestSoftRecoverDispatch(t *testing.T) {
 				softCount:    tt.softCount,
 			}
 
-			w.softRecover(context.Background())
+			// Pre-cancelled ctx — sleepCtx in fullCycle returns immediately,
+			// so escalating cases don't wait the 3s post-cycle settle.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			w.softRecover(ctx)
 
 			if fake.flushCalls != tt.wantFlush {
 				t.Errorf("flush calls = %d, want %d", fake.flushCalls, tt.wantFlush)
@@ -175,7 +181,12 @@ func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 		lastCycle:    time.Now().Add(-time.Hour), // cooldown elapsed long ago
 	}
 
-	w.fullCycle(t.Context())
+	// Pre-cancelled ctx so the post-cycle settle doesn't run for 3s.
+	// rec.cycle is a fake and ignores ctx, so it still records the call.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	w.fullCycle(ctx)
 
 	if fake.cycleCalls != 1 {
 		t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
@@ -198,5 +209,32 @@ func TestFullCycleCycleErrorRecorded(t *testing.T) {
 
 	if fake.cycleCalls != 1 {
 		t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
+	}
+}
+
+// TestFullCycleHonorsContextDuringSettle verifies #4: the post-cycle settle
+// must return promptly when the context is cancelled, instead of blocking
+// for the full 3 s on shutdown.
+func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := &Watchdog{
+		iface:        "eth0",
+		gateway:      "10.0.0.1",
+		pingTarget:   "192.0.2.1",
+		cooldown:     time.Millisecond,
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		log:          silentLogger(),
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // cancel before we even start
+
+	start := time.Now()
+	w.fullCycle(ctx)
+	elapsed := time.Since(start)
+
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("fullCycle took %v after pre-cancelled ctx, expected near-immediate return", elapsed)
 	}
 }

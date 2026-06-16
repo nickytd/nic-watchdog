@@ -184,7 +184,10 @@ func (w *Watchdog) fullCycle(ctx context.Context) {
 		return
 	}
 
-	time.Sleep(3 * time.Second)
+	if err := sleepCtx(ctx, 3*time.Second); err != nil {
+		w.log.Info("shutdown during post-cycle settle", slog.String("error", err.Error()))
+		return
+	}
 
 	switch {
 	case ping(ctx, w.pingTarget, 3*time.Second):
