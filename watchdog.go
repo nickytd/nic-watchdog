@@ -79,7 +79,7 @@ func (w *Watchdog) Run(ctx context.Context) error {
 			w.iface = ri.iface
 		}
 		w.log.Info("discovered gateway",
-			slog.String("gateway", w.gateway),
+			slog.String(roleGateway, w.gateway),
 			slog.String("iface", w.iface),
 			slog.String("routeIface", w.routeIface),
 		)
@@ -94,8 +94,8 @@ func (w *Watchdog) Run(ctx context.Context) error {
 	w.log.Info("watchdog started",
 		slog.String("iface", w.iface),
 		slog.String("routeIface", w.routeIface),
-		slog.String("target", w.pingTarget),
-		slog.String("gateway", w.gateway),
+		slog.String(roleTarget, w.pingTarget),
+		slog.String(roleGateway, w.gateway),
 		slog.Duration("interval", w.checkInterval),
 	)
 
@@ -126,8 +126,8 @@ func (w *Watchdog) Run(ctx context.Context) error {
 }
 
 // pingObs wraps ping with histogram + gauge instrumentation. The role label
-// ("target" or "gateway") makes both signals queryable separately even when
-// pingTarget == gateway in pathological configs.
+// (roleTarget or roleGateway) makes both signals queryable separately even
+// when pingTarget == gateway in pathological configs.
 func (w *Watchdog) pingObs(ctx context.Context, role, addr string, timeout time.Duration) bool {
 	start := time.Now()
 	ok := ping(ctx, addr, timeout)
@@ -137,16 +137,16 @@ func (w *Watchdog) pingObs(ctx context.Context, role, addr string, timeout time.
 	}
 	w.m.pingDurationSeconds.WithLabelValues(role, result).Observe(time.Since(start).Seconds())
 	switch role {
-	case "target":
+	case roleTarget:
 		w.m.externalReachable.WithLabelValues(addr).Set(gauge01(ok))
-	case "gateway":
+	case roleGateway:
 		w.m.gatewayReachable.WithLabelValues(addr).Set(gauge01(ok))
 	}
 	return ok
 }
 
 func (w *Watchdog) check(ctx context.Context) {
-	if w.pingObs(ctx, "target", w.pingTarget, 2*time.Second) {
+	if w.pingObs(ctx, roleTarget, w.pingTarget, 2*time.Second) {
 		w.m.checkTotal.WithLabelValues("ok").Inc()
 		if w.softCount > 0 {
 			w.log.Info("external connectivity restored", slog.Int("after_soft_attempts", w.softCount))
@@ -156,7 +156,7 @@ func (w *Watchdog) check(ctx context.Context) {
 		return
 	}
 
-	gatewayUp := w.pingObs(ctx, "gateway", w.gateway, 2*time.Second)
+	gatewayUp := w.pingObs(ctx, roleGateway, w.gateway, 2*time.Second)
 
 	if gatewayUp {
 		w.m.checkTotal.WithLabelValues("external_down").Inc()
@@ -169,9 +169,9 @@ func (w *Watchdog) check(ctx context.Context) {
 	carrier := hasCarrier(w.iface)
 	w.m.carrierUp.WithLabelValues(w.iface).Set(gauge01(carrier))
 	if carrier {
-		if w.pingObs(ctx, "gateway", w.gateway, 5*time.Second) {
+		if w.pingObs(ctx, roleGateway, w.gateway, 5*time.Second) {
 			w.m.checkTotal.WithLabelValues("gateway_recovered_on_retry").Inc()
-			w.log.Info("gateway reachable on retry", slog.String("gateway", w.gateway))
+			w.log.Info("gateway reachable on retry", slog.String(roleGateway, w.gateway))
 			return
 		}
 	}
@@ -184,7 +184,7 @@ func (w *Watchdog) softRecover(ctx context.Context) {
 	switch {
 	case w.softCount == 1:
 		w.log.Info("external unreachable, gateway up — flushing ARP and routes",
-			slog.String("gateway", w.gateway),
+			slog.String(roleGateway, w.gateway),
 			slog.Int("attempt", w.softCount),
 		)
 		w.m.recoveryTotal.WithLabelValues("flush").Inc()
@@ -229,8 +229,8 @@ func (w *Watchdog) fullCycle(ctx context.Context) {
 
 	w.log.Info("cycling interface",
 		slog.String("iface", w.iface),
-		slog.String("gateway", w.gateway),
-		slog.String("target", w.pingTarget),
+		slog.String(roleGateway, w.gateway),
+		slog.String(roleTarget, w.pingTarget),
 	)
 	w.lastCycle = time.Now()
 	w.m.lastCycleTimestamp.Set(float64(w.lastCycle.Unix()))
@@ -248,11 +248,11 @@ func (w *Watchdog) fullCycle(ctx context.Context) {
 	}
 
 	switch {
-	case w.pingObs(ctx, "target", w.pingTarget, 3*time.Second):
+	case w.pingObs(ctx, roleTarget, w.pingTarget, 3*time.Second):
 		w.log.Info("connectivity restored after cycle")
 		w.softCount = 0
 		w.m.softAttempts.Set(0)
-	case w.pingObs(ctx, "gateway", w.gateway, 3*time.Second):
+	case w.pingObs(ctx, roleGateway, w.gateway, 3*time.Second):
 		w.log.Warn("gateway reachable after cycle, external still down — soft recovery will continue")
 	default:
 		w.log.Error("network still unreachable after cycle")
