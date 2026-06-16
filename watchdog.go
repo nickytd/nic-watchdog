@@ -157,7 +157,12 @@ func (w *Watchdog) softRecover(ctx context.Context) {
 		w.log.Info("soft recovery exhausted — escalating to full cycle",
 			slog.Int("attempts", w.softCount),
 		)
-		w.softCount = 0
+		// Don't reset softCount here: if fullCycle is suppressed by cooldown
+		// (or runs but doesn't restore connectivity), keeping softCount at
+		// softMax means the next tick re-enters this branch and calls
+		// fullCycle again, instead of restarting flush/networkd-restart from
+		// attempt 1 — which would never reach a cycle while cooldown holds.
+		// fullCycle resets softCount on the success path.
 		w.fullCycle(ctx)
 	}
 }

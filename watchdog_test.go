@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -46,7 +45,7 @@ func (f *fakeRecoverer) cycle(_ context.Context, iface string, downWait time.Dur
 
 // silentLogger discards output so tests don't leak log lines into go test -v.
 func silentLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 func TestNewWatchdog(t *testing.T) {
@@ -96,18 +95,17 @@ func TestNewWatchdog(t *testing.T) {
 // were deleted.
 func TestSoftRecoverDispatch(t *testing.T) {
 	tests := []struct {
-		name         string
-		softCount    int
-		softMax      int
-		wantFlush    int
-		wantRestart  int
-		wantCycle    int
-		wantSoftZero bool
+		name        string
+		softCount   int
+		softMax     int
+		wantFlush   int
+		wantRestart int
+		wantCycle   int
 	}{
 		{name: "first attempt flushes ARP", softCount: 1, softMax: 3, wantFlush: 1},
 		{name: "second attempt restarts networkd", softCount: 2, softMax: 3, wantRestart: 1},
-		{name: "at softMax escalates to full cycle", softCount: 3, softMax: 3, wantCycle: 1, wantSoftZero: true},
-		{name: "above softMax also escalates", softCount: 5, softMax: 3, wantCycle: 1, wantSoftZero: true},
+		{name: "at softMax escalates to full cycle", softCount: 3, softMax: 3, wantCycle: 1},
+		{name: "above softMax also escalates", softCount: 5, softMax: 3, wantCycle: 1},
 		{name: "zero softCount is a no-op", softCount: 0, softMax: 3},
 	}
 
@@ -127,7 +125,7 @@ func TestSoftRecoverDispatch(t *testing.T) {
 				softCount:    tt.softCount,
 			}
 
-			// Pre-cancelled ctx — sleepCtx in fullCycle returns immediately,
+			// Pre-canceled ctx — sleepCtx in fullCycle returns immediately,
 			// so escalating cases don't wait the 3s post-cycle settle.
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
@@ -143,10 +141,50 @@ func TestSoftRecoverDispatch(t *testing.T) {
 			if fake.cycleCalls != tt.wantCycle {
 				t.Errorf("cycle calls = %d, want %d", fake.cycleCalls, tt.wantCycle)
 			}
-			if tt.wantSoftZero && w.softCount != 0 {
-				t.Errorf("softCount = %d, want 0 after escalation", w.softCount)
-			}
 		})
+	}
+}
+
+// TestSoftRecoverPreservesCountWhenCycleSuppressed verifies #5: when
+// softRecover escalates to fullCycle but the cycle is gated by cooldown,
+// softCount must NOT be reset. Otherwise the next tick would restart the
+// soft chain at attempt 1 (flush, networkd-restart, …) for the entire
+// cooldown window — even though we just decided that ladder was exhausted.
+func TestSoftRecoverPreservesCountWhenCycleSuppressed(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := &Watchdog{
+		iface:        "eth0",
+		routeIface:   "eth0",
+		gateway:      "10.0.0.1",
+		pingTarget:   "192.0.2.1",
+		cooldown:     time.Hour,
+		softMax:      3,
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		log:          silentLogger(),
+		softCount:    3,
+		lastCycle:    time.Now(), // cycle just ran; cooldown is active
+	}
+
+	w.softRecover(context.Background())
+
+	if fake.cycleCalls != 0 {
+		t.Errorf("cycle was called during cooldown (calls=%d)", fake.cycleCalls)
+	}
+	if w.softCount != 3 {
+		t.Errorf("softCount = %d, want 3 (must not reset when cycle is suppressed)", w.softCount)
+	}
+
+	// Second tick at softMax: must still escalate to fullCycle (suppressed
+	// again), NOT fall back to attempt-1 flush.
+	w.softCount++ // simulate check() incrementing on the next tick
+	w.softRecover(context.Background())
+
+	if fake.flushCalls != 0 {
+		t.Errorf("flush was called after softMax with active cooldown (calls=%d)", fake.flushCalls)
+	}
+	if fake.restartCalls != 0 {
+		t.Errorf("restartNetworkd was called after softMax with active cooldown (calls=%d)", fake.restartCalls)
 	}
 }
 
@@ -181,7 +219,7 @@ func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 		lastCycle:    time.Now().Add(-time.Hour), // cooldown elapsed long ago
 	}
 
-	// Pre-cancelled ctx so the post-cycle settle doesn't run for 3s.
+	// Pre-canceled ctx so the post-cycle settle doesn't run for 3s.
 	// rec.cycle is a fake and ignores ctx, so it still records the call.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -213,7 +251,7 @@ func TestFullCycleCycleErrorRecorded(t *testing.T) {
 }
 
 // TestFullCycleHonorsContextDuringSettle verifies #4: the post-cycle settle
-// must return promptly when the context is cancelled, instead of blocking
+// must return promptly when the context is canceled, instead of blocking
 // for the full 3 s on shutdown.
 func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
 	fake := &fakeRecoverer{}
@@ -235,6 +273,6 @@ func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
 	elapsed := time.Since(start)
 
 	if elapsed > 500*time.Millisecond {
-		t.Errorf("fullCycle took %v after pre-cancelled ctx, expected near-immediate return", elapsed)
+		t.Errorf("fullCycle took %v after pre-canceled ctx, expected near-immediate return", elapsed)
 	}
 }
