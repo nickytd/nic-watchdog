@@ -41,6 +41,7 @@ type Watchdog struct {
 	cooldown      time.Duration
 	softMax       int
 	linkDownWait  time.Duration
+	metricsAddr   string
 
 	rec recoverer
 	m   *metrics
@@ -59,6 +60,7 @@ func NewWatchdog(cfg Config, logger *slog.Logger) *Watchdog {
 		cooldown:      cfg.Cooldown,
 		softMax:       cfg.SoftMax,
 		linkDownWait:  5 * time.Second,
+		metricsAddr:   cfg.MetricsAddr,
 		rec:           osRecoverer{},
 		m:             newMetrics(),
 		log:           logger,
@@ -96,6 +98,18 @@ func (w *Watchdog) Run(ctx context.Context) error {
 		slog.String("gateway", w.gateway),
 		slog.Duration("interval", w.checkInterval),
 	)
+
+	if w.metricsAddr != "" {
+		ms := newMetricsServer(w.metricsAddr, w.m.registry, w.log)
+		go func() {
+			if err := ms.run(ctx); err != nil {
+				w.log.Error("metrics server stopped with error",
+					slog.String("addr", w.metricsAddr),
+					slog.String("error", err.Error()),
+				)
+			}
+		}()
+	}
 
 	ticker := time.NewTicker(w.checkInterval)
 	defer ticker.Stop()
