@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -88,43 +89,72 @@ func discoverGateway(iface string) (routeInfo, error) {
 
 // parseRouteTable finds the default gateway. When iface is non-empty, only
 // routes on that interface (or its VLAN sub-interfaces) are considered.
-// When iface is empty, the first default route on any interface is used.
+// When iface is empty, default routes on any interface are considered.
+// Among matching default routes, the one with the lowest metric wins —
+// matching the kernel's own tie-breaker. Ties prefer the earliest entry.
 func parseRouteTable(data, iface string) (routeInfo, error) {
-	prefix := iface + "."
+	var best routeInfo
+	bestMetric := uint64(math.MaxUint64)
+	found := false
+
 	for _, line := range strings.Split(data, "\n")[1:] {
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
+		ri, metric, ok, err := parseRouteRow(line, iface)
+		if err != nil {
+			return routeInfo{}, err
+		}
+		if !ok || (found && metric >= bestMetric) {
 			continue
 		}
-		if iface != "" && fields[0] != iface && !strings.HasPrefix(fields[0], prefix) {
-			continue
-		}
-		// Destination 00000000 = default route; flags: RTF_UP (0x1) + RTF_GATEWAY (0x2)
-		if fields[1] == "00000000" {
-			flags, err := strconv.ParseUint(fields[3], 16, 16)
-			if err != nil || flags&0x3 != 0x3 {
-				continue
-			}
-			gw, err := parseHexIP(fields[2])
-			if err != nil {
-				return routeInfo{}, fmt.Errorf("parse gateway: %w", err)
-			}
-			ri := routeInfo{
-				gateway:    gw,
-				routeIface: fields[0],
-			}
-			if iface != "" {
-				ri.iface = iface
-			} else {
-				ri.iface, _, _ = strings.Cut(fields[0], ".")
-			}
-			return ri, nil
-		}
+		best, bestMetric, found = ri, metric, true
 	}
+
+	if !found {
+		if iface != "" {
+			return routeInfo{}, fmt.Errorf("no default route on %s", iface)
+		}
+		return routeInfo{}, errors.New("no default route found")
+	}
+	return best, nil
+}
+
+// parseRouteRow extracts a default-route candidate from a single /proc/net/route
+// line. It returns ok=false for lines that don't qualify (wrong iface, not a
+// default route, missing UP|GATEWAY flags, malformed metric); it returns an
+// error only for a malformed gateway in an otherwise-valid row.
+func parseRouteRow(line, iface string) (routeInfo, uint64, bool, error) {
+	fields := strings.Fields(line)
+	if len(fields) < 8 {
+		return routeInfo{}, 0, false, nil
+	}
+	if iface != "" && fields[0] != iface && !strings.HasPrefix(fields[0], iface+".") {
+		return routeInfo{}, 0, false, nil
+	}
+	// Destination 00000000 = default route; flags: RTF_UP (0x1) + RTF_GATEWAY (0x2)
+	if fields[1] != "00000000" {
+		return routeInfo{}, 0, false, nil
+	}
+	flags, err := strconv.ParseUint(fields[3], 16, 16)
+	if err != nil {
+		return routeInfo{}, 0, false, nil //nolint:nilerr // skip malformed rows
+	}
+	if flags&0x3 != 0x3 {
+		return routeInfo{}, 0, false, nil
+	}
+	metric, err := strconv.ParseUint(fields[6], 10, 32)
+	if err != nil {
+		return routeInfo{}, 0, false, nil //nolint:nilerr // skip malformed rows
+	}
+	gw, err := parseHexIP(fields[2])
+	if err != nil {
+		return routeInfo{}, 0, false, fmt.Errorf("parse gateway: %w", err)
+	}
+	ri := routeInfo{gateway: gw, routeIface: fields[0]}
 	if iface != "" {
-		return routeInfo{}, fmt.Errorf("no default route on %s", iface)
+		ri.iface = iface
+	} else {
+		ri.iface, _, _ = strings.Cut(fields[0], ".")
 	}
-	return routeInfo{}, errors.New("no default route found")
+	return ri, metric, true, nil
 }
 
 func parseHexIP(hex string) (string, error) {

@@ -206,6 +206,46 @@ func TestParseRouteTable(t *testing.T) {
 			data:    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n",
 			wantErr: true,
 		},
+		{
+			name:  "VLAN sub-interface with lower metric beats base iface",
+			iface: "eth0",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
+				"eth0.10\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.1.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0.10",
+		},
+		{
+			name:  "two defaults on same iface — lower metric wins",
+			iface: "eth0",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"eth0\t00000000\t0102A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n" +
+				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.1.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0",
+		},
+		{
+			name:  "auto-detect picks lowest-metric default across ifaces",
+			iface: "",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"wlan0\t00000000\t0201A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n" +
+				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.1.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0",
+		},
+		{
+			name:  "tie on metric prefers earlier entry",
+			iface: "eth0",
+			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
+				"eth0.10\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
+			wantGW:      "192.168.1.1",
+			wantIface:   "eth0",
+			wantRouteIf: "eth0",
+		},
 	}
 
 	for _, tt := range tests {
