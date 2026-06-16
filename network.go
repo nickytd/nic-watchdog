@@ -234,11 +234,30 @@ func restartNetworkd(ctx context.Context) error {
 	return exec.CommandContext(ctx, "systemctl", "restart", "systemd-networkd").Run()
 }
 
+// sleepCtx blocks for d, returning ctx.Err() if the context is canceled
+// first. Use this instead of time.Sleep anywhere a long sleep would otherwise
+// stall shutdown — interface cycling, post-cycle settle, etc.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
 func cycleInterface(ctx context.Context, iface string, downWait time.Duration) error {
 	if err := exec.CommandContext(ctx, "ip", "link", "set", iface, "down").Run(); err != nil {
 		return fmt.Errorf("link down: %w", err)
 	}
-	time.Sleep(downWait)
+	if err := sleepCtx(ctx, downWait); err != nil {
+		return fmt.Errorf("interrupted between link down and up: %w", err)
+	}
 	if err := exec.CommandContext(ctx, "ip", "link", "set", iface, "up").Run(); err != nil {
 		return fmt.Errorf("link up: %w", err)
 	}
