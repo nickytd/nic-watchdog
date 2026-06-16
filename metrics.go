@@ -8,6 +8,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
+// Probe role labels — used as both metric labels and slog field keys so a
+// single change keeps dashboards, alerts, and journal logs aligned.
+const (
+	roleTarget  = "target"
+	roleGateway = "gateway"
+)
+
 // metrics is the watchdog's instrumentation surface. All collectors are
 // constructed against a private registry so callers can decide whether to
 // expose them; the registry is exported via metrics.registry.
@@ -39,13 +46,13 @@ func newMetrics() *metrics {
 		externalReachable: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "nic_watchdog_external_reachable",
 			Help: "1 when the external probe target is reachable, 0 otherwise.",
-		}, []string{"target"}),
+		}, []string{roleTarget}),
 
 		gatewayReachable: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "nic_watchdog_gateway_reachable",
 			Help: "1 when the configured gateway is reachable, 0 otherwise. " +
 				"Combined with external_reachable distinguishes link-down from PHY TX failures.",
-		}, []string{"gateway"}),
+		}, []string{roleGateway}),
 
 		carrierUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "nic_watchdog_carrier_up",
@@ -81,7 +88,7 @@ func newMetrics() *metrics {
 			Name:    "nic_watchdog_ping_duration_seconds",
 			Help:    "ICMP ping duration. Spikes correlate with PHY soft failures.",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
-		}, []string{"target", "result"}),
+		}, []string{roleTarget, "result"}),
 
 		info: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "nic_watchdog_info",

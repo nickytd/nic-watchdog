@@ -29,7 +29,7 @@ func freeAddr(t *testing.T) string {
 
 func TestMetricsServerServesScrapeAndShutsDown(t *testing.T) {
 	w := NewWatchdog(Config{
-		PingTarget:    "192.0.2.1",
+		PingTarget:    testTargetUnreachable,
 		CheckInterval: time.Second,
 		Cooldown:      time.Second,
 		SoftMax:       3,
@@ -115,7 +115,7 @@ func TestMetricsServerBindFailureSurfaces(t *testing.T) {
 	addr := l.Addr().String()
 
 	w := NewWatchdog(Config{
-		PingTarget:    "192.0.2.1",
+		PingTarget:    testTargetUnreachable,
 		CheckInterval: time.Second,
 		Cooldown:      time.Second,
 		SoftMax:       3,

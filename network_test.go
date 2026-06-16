@@ -19,7 +19,7 @@ func TestParseHexIP(t *testing.T) {
 		{
 			name: "typical gateway 192.168.1.1",
 			hex:  "0101A8C0",
-			want: "192.168.1.1",
+			want: testGatewayHome,
 		},
 		{
 			name: "loopback 127.0.0.1",
@@ -37,9 +37,9 @@ func TestParseHexIP(t *testing.T) {
 			want: "255.255.255.255",
 		},
 		{
-			name: "10.0.0.1",
+			name: testGatewayLAN,
 			hex:  "0100000A",
-			want: "10.0.0.1",
+			want: testGatewayLAN,
 		},
 		{
 			name:    "too short",
@@ -95,76 +95,76 @@ func TestParseRouteTable(t *testing.T) {
 	}{
 		{
 			name:  "single default route",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "eth0",
-			wantRouteIf: "eth0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEth0,
+			wantRouteIf: testIfaceEth0,
 		},
 		{
 			name:  "multiple routes picks default",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "eth0",
-			wantRouteIf: "eth0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEth0,
+			wantRouteIf: testIfaceEth0,
 		},
 		{
 			name:  "wrong interface ignored",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"wlan0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
 			wantErr: true,
 		},
 		{
 			name:  "no default route",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n",
 			wantErr: true,
 		},
 		{
 			name:  "route without gateway flag ignored",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0101A8C0\t0001\t0\t0\t100\t00000000\t0\t0\t0\n",
 			wantErr: true,
 		},
 		{
 			name:    "empty route table",
-			iface:   "eth0",
+			iface:   testIfaceEth0,
 			data:    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n",
 			wantErr: true,
 		},
 		{
 			name:  "10.x gateway",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0100000A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "10.0.0.1",
-			wantIface:   "eth0",
-			wantRouteIf: "eth0",
+			wantGW:      testGatewayLAN,
+			wantIface:   testIfaceEth0,
+			wantRouteIf: testIfaceEth0,
 		},
 		{
 			name:  "VLAN sub-interface matches base iface",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0.1\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.0.1",
-			wantIface:   "eth0",
+			wantGW:      testGatewayAlt,
+			wantIface:   testIfaceEth0,
 			wantRouteIf: "eth0.1",
 		},
 		{
 			name:  "VLAN sub-interface with higher ID",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0.100\t00000A0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n" +
 				"eth0.1\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.0.1",
-			wantIface:   "eth0",
+			wantGW:      testGatewayAlt,
+			wantIface:   testIfaceEth0,
 			wantRouteIf: "eth0.1",
 		},
 		{
@@ -179,17 +179,17 @@ func TestParseRouteTable(t *testing.T) {
 			iface: "",
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"end0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "end0",
-			wantRouteIf: "end0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEnd0,
+			wantRouteIf: testIfaceEnd0,
 		},
 		{
 			name:  "auto-detect with VLAN extracts base iface",
 			iface: "",
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"end0.100\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.0.1",
-			wantIface:   "end0",
+			wantGW:      testGatewayAlt,
+			wantIface:   testIfaceEnd0,
 			wantRouteIf: "end0.100",
 		},
 		{
@@ -210,23 +210,23 @@ func TestParseRouteTable(t *testing.T) {
 		},
 		{
 			name:  "VLAN sub-interface with lower metric beats base iface",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
 				"eth0.10\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "eth0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEth0,
 			wantRouteIf: "eth0.10",
 		},
 		{
 			name:  "two defaults on same iface — lower metric wins",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0102A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "eth0",
-			wantRouteIf: "eth0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEth0,
+			wantRouteIf: testIfaceEth0,
 		},
 		{
 			name:  "auto-detect picks lowest-metric default across ifaces",
@@ -234,19 +234,19 @@ func TestParseRouteTable(t *testing.T) {
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"wlan0\t00000000\t0201A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "eth0",
-			wantRouteIf: "eth0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEth0,
+			wantRouteIf: testIfaceEth0,
 		},
 		{
 			name:  "tie on metric prefers earlier entry",
-			iface: "eth0",
+			iface: testIfaceEth0,
 			data: "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 				"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
 				"eth0.10\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n",
-			wantGW:      "192.168.1.1",
-			wantIface:   "eth0",
-			wantRouteIf: "eth0",
+			wantGW:      testGatewayHome,
+			wantIface:   testIfaceEth0,
+			wantRouteIf: testIfaceEth0,
 		},
 	}
 
@@ -297,14 +297,14 @@ func TestPeerMatches(t *testing.T) {
 		},
 		{
 			name: "ip peer matches (raw socket fallback)",
-			peer: &net.IPAddr{IP: net.ParseIP("192.168.1.1")},
-			want: net.ParseIP("192.168.1.1"),
+			peer: &net.IPAddr{IP: net.ParseIP(testGatewayHome)},
+			want: net.ParseIP(testGatewayHome),
 			ok:   true,
 		},
 		{
 			name: "ip peer mismatch",
 			peer: &net.IPAddr{IP: net.ParseIP("192.168.1.2")},
-			want: net.ParseIP("192.168.1.1"),
+			want: net.ParseIP(testGatewayHome),
 			ok:   false,
 		},
 		{
@@ -360,7 +360,7 @@ func TestPingLoopbackTimeout(t *testing.T) {
 	// 192.0.2.1 is in TEST-NET-1 (RFC 5737) — guaranteed unreachable. We use a
 	// short timeout because we don't want to wait long for the negative case.
 	start := time.Now()
-	ok := ping(ctx, "192.0.2.1", 200*time.Millisecond)
+	ok := ping(ctx, testTargetUnreachable, 200*time.Millisecond)
 	elapsed := time.Since(start)
 
 	if ok {

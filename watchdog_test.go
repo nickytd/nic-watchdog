@@ -55,7 +55,7 @@ func TestNewWatchdog(t *testing.T) {
 	cfg := Config{
 		Iface:         "eth1",
 		PingTarget:    "1.1.1.1",
-		Gateway:       "10.0.0.1",
+		Gateway:       testGatewayLAN,
 		CheckInterval: 5 * time.Second,
 		Cooldown:      3 * time.Minute,
 		SoftMax:       5,
@@ -116,10 +116,10 @@ func TestSoftRecoverDispatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &fakeRecoverer{}
 			w := &Watchdog{
-				iface:        "eth0",
-				routeIface:   "eth0",
-				gateway:      "10.0.0.1",
-				pingTarget:   "192.0.2.1",
+				iface:        testIfaceEth0,
+				routeIface:   testIfaceEth0,
+				gateway:      testGatewayLAN,
+				pingTarget:   testTargetUnreachable,
 				cooldown:     time.Millisecond,
 				softMax:      tt.softMax,
 				linkDownWait: time.Millisecond,
@@ -157,10 +157,10 @@ func TestSoftRecoverDispatch(t *testing.T) {
 func TestSoftRecoverPreservesCountWhenCycleSuppressed(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        "eth0",
-		routeIface:   "eth0",
-		gateway:      "10.0.0.1",
-		pingTarget:   "192.0.2.1",
+		iface:        testIfaceEth0,
+		routeIface:   testIfaceEth0,
+		gateway:      testGatewayLAN,
+		pingTarget:   testTargetUnreachable,
 		cooldown:     time.Hour,
 		softMax:      3,
 		linkDownWait: time.Millisecond,
@@ -196,7 +196,7 @@ func TestSoftRecoverPreservesCountWhenCycleSuppressed(t *testing.T) {
 func TestFullCycleCooldown(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        "eth0",
+		iface:        testIfaceEth0,
 		cooldown:     10 * time.Minute,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
@@ -215,9 +215,9 @@ func TestFullCycleCooldown(t *testing.T) {
 func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        "eth0",
-		gateway:      "10.0.0.1",
-		pingTarget:   "192.0.2.1", // unreachable, post-cycle ping returns false
+		iface:        testIfaceEth0,
+		gateway:      testGatewayLAN,
+		pingTarget:   testTargetUnreachable, // unreachable, post-cycle ping returns false
 		cooldown:     10 * time.Millisecond,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
@@ -236,7 +236,7 @@ func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 	if fake.cycleCalls != 1 {
 		t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
 	}
-	if fake.cycleIface != "eth0" {
+	if fake.cycleIface != testIfaceEth0 {
 		t.Errorf("cycle iface = %q, want eth0", fake.cycleIface)
 	}
 }
@@ -244,7 +244,7 @@ func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 func TestFullCycleCycleErrorRecorded(t *testing.T) {
 	fake := &fakeRecoverer{cycleErr: errors.New("boom")}
 	w := &Watchdog{
-		iface:        "eth0",
+		iface:        testIfaceEth0,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
 		m:            newMetrics(),
@@ -264,9 +264,9 @@ func TestFullCycleCycleErrorRecorded(t *testing.T) {
 func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        "eth0",
-		gateway:      "10.0.0.1",
-		pingTarget:   "192.0.2.1",
+		iface:        testIfaceEth0,
+		gateway:      testGatewayLAN,
+		pingTarget:   testTargetUnreachable,
 		cooldown:     time.Millisecond,
 		linkDownWait: time.Millisecond,
 		rec:          fake,
@@ -312,10 +312,10 @@ func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
 func TestMetricsInstrumentation(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        "eth0",
-		routeIface:   "eth0",
-		gateway:      "10.0.0.1",
-		pingTarget:   "192.0.2.1",
+		iface:        testIfaceEth0,
+		routeIface:   testIfaceEth0,
+		gateway:      testGatewayLAN,
+		pingTarget:   testTargetUnreachable,
 		cooldown:     time.Millisecond,
 		softMax:      3,
 		linkDownWait: time.Millisecond,
@@ -357,8 +357,8 @@ func TestMetricsInstrumentation(t *testing.T) {
 func TestMetricsRecoveryFailure(t *testing.T) {
 	fake := &fakeRecoverer{flushErr: errors.New("boom")}
 	w := &Watchdog{
-		routeIface: "eth0",
-		gateway:    "10.0.0.1",
+		routeIface: testIfaceEth0,
+		gateway:    testGatewayLAN,
 		softMax:    3,
 		rec:        fake,
 		m:          newMetrics(),
