@@ -17,7 +17,11 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/sys/class/net /run
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+# CAP_NET_ADMIN: ip link set / neigh flush / route flush.
+# Unprivileged ICMP (IPPROTO_ICMP datagram socket) is used for liveness
+# probes — no CAP_NET_RAW needed; gated by net.ipv4.ping_group_range,
+# which is open by default on Debian / Raspberry Pi OS.
+AmbientCapabilities=CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target
