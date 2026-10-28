@@ -34,6 +34,7 @@ type metrics struct {
 	softAttempts        prometheus.Gauge
 	lastCycleTimestamp  prometheus.Gauge
 	pingDurationSeconds *prometheus.HistogramVec
+	carrierWaitSeconds  prometheus.Histogram
 	info                *prometheus.GaugeVec
 }
 
@@ -90,6 +91,13 @@ func newMetrics() *metrics {
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
 		}, []string{roleTarget, "result"}),
 
+		carrierWaitSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "nic_watchdog_carrier_wait_seconds",
+			Help: "Time waited for carrier to come up after a full interface cycle. " +
+				"Reveals real PHY relink timing; catches BCM firmware link-timing regressions.",
+			Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 8, 10, 15, 20},
+		}),
+
 		info: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "nic_watchdog_info",
 			Help: "Static build/runtime info. Always 1; use the labels.",
@@ -106,6 +114,7 @@ func newMetrics() *metrics {
 		m.softAttempts,
 		m.lastCycleTimestamp,
 		m.pingDurationSeconds,
+		m.carrierWaitSeconds,
 		m.info,
 		// Free Go runtime + process metrics — useful for "is the watchdog
 		// itself healthy" alongside the network-side signals.
