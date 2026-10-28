@@ -375,3 +375,16 @@ func TestMetricsRecoveryFailure(t *testing.T) {
 		t.Errorf("recovery_failure_total{step=flush} = %v, want 1", got)
 	}
 }
+
+func TestMetricsCarrierWait(t *testing.T) {
+	m := newMetrics()
+	m.carrierWaitSeconds.Observe(1.5)
+
+	var dtoMetric dto.Metric
+	if err := m.carrierWaitSeconds.Write(&dtoMetric); err != nil {
+		t.Fatalf("carrierWaitSeconds Write: %v", err)
+	}
+	if got := dtoMetric.GetHistogram().GetSampleCount(); got != 1 {
+		t.Errorf("carrier_wait_seconds sample count = %d, want 1", got)
+	}
+}
