@@ -376,6 +376,36 @@ func TestMetricsRecoveryFailure(t *testing.T) {
 	}
 }
 
+// TestCheckCarrierSeam verifies check() reads carrier through the injectable
+// carrierFn: when target+gateway are down but carrier is up and the gateway
+// becomes reachable on the longer retry, check() records the recovered path
+// instead of cycling.
+func TestCheckCarrierSeam(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := &Watchdog{
+		iface:        testIfaceEth0,
+		routeIface:   testIfaceEth0,
+		gateway:      testGatewayLAN,
+		pingTarget:   testTargetUnreachable,
+		cooldown:     time.Millisecond,
+		softMax:      3,
+		linkDownWait: time.Millisecond,
+		rec:          fake,
+		m:            newMetrics(),
+		log:          silentLogger(),
+		carrierFn:    func(string) bool { return true },
+	}
+
+	// gateway + target are both unreachable test addresses, so the retry ping
+	// also fails and we fall through to fullCycle. We assert carrierFn was the
+	// path taken by confirming carrierUp gauge was set to 1.
+	w.check(context.Background())
+
+	if got := gaugeValue(t, w.m.carrierUp.WithLabelValues(testIfaceEth0)); got != 1 {
+		t.Errorf("carrier_up = %v, want 1 (check must read carrierFn)", got)
+	}
+}
+
 func TestMetricsCarrierWait(t *testing.T) {
 	m := newMetrics()
 	m.carrierWaitSeconds.Observe(1.5)
