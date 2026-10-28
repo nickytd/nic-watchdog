@@ -418,3 +418,52 @@ func TestMetricsCarrierWait(t *testing.T) {
 		t.Errorf("carrier_wait_seconds sample count = %d, want 1", got)
 	}
 }
+
+func TestWaitForCarrier(t *testing.T) {
+	t.Run("carrier already up returns nil immediately", func(t *testing.T) {
+		w := &Watchdog{m: newMetrics(), log: silentLogger(),
+			carrierFn: func(string) bool { return true }}
+		start := time.Now()
+		err := w.waitForCarrier(context.Background(), testIfaceEth0, time.Second, 10*time.Millisecond)
+		if err != nil {
+			t.Fatalf("waitForCarrier = %v, want nil", err)
+		}
+		if time.Since(start) > 100*time.Millisecond {
+			t.Errorf("took %v, want near-immediate", time.Since(start))
+		}
+	})
+
+	t.Run("carrier comes up mid-wait", func(t *testing.T) {
+		var calls int
+		w := &Watchdog{m: newMetrics(), log: silentLogger(),
+			carrierFn: func(string) bool { calls++; return calls >= 3 }}
+		err := w.waitForCarrier(context.Background(), testIfaceEth0, time.Second, 5*time.Millisecond)
+		if err != nil {
+			t.Fatalf("waitForCarrier = %v, want nil", err)
+		}
+	})
+
+	t.Run("timeout returns errCarrierTimeout", func(t *testing.T) {
+		w := &Watchdog{m: newMetrics(), log: silentLogger(),
+			carrierFn: func(string) bool { return false }}
+		err := w.waitForCarrier(context.Background(), testIfaceEth0, 30*time.Millisecond, 5*time.Millisecond)
+		if !errors.Is(err, errCarrierTimeout) {
+			t.Fatalf("waitForCarrier = %v, want errCarrierTimeout", err)
+		}
+	})
+
+	t.Run("canceled ctx returns promptly", func(t *testing.T) {
+		w := &Watchdog{m: newMetrics(), log: silentLogger(),
+			carrierFn: func(string) bool { return false }}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		err := w.waitForCarrier(ctx, testIfaceEth0, 10*time.Second, 5*time.Millisecond)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waitForCarrier = %v, want context.Canceled", err)
+		}
+		if time.Since(start) > 500*time.Millisecond {
+			t.Errorf("took %v, want prompt return", time.Since(start))
+		}
+	})
+}

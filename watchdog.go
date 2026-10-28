@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -20,6 +21,10 @@ const (
 	postCycleL3Budget     = 5 * time.Second
 	postCycleL3Interval   = 1 * time.Second
 )
+
+// errCarrierTimeout signals waitForCarrier gave up before the PHY reported
+// carrier — a genuine "link never came back" failure, distinct from an L3 one.
+var errCarrierTimeout = errors.New("carrier did not come up before timeout")
 
 // recoverer performs the OS-level recovery actions. The default implementation
 // (osRecoverer) shells out to ip / systemctl; tests substitute a fake to
@@ -232,6 +237,47 @@ func (w *Watchdog) softRecover(ctx context.Context) {
 		// attempt 1 — which would never reach a cycle while cooldown holds.
 		// fullCycle resets softCount on the success path.
 		w.fullCycle(ctx)
+	}
+}
+
+// waitForCarrier blocks until carrierFn reports the interface has carrier, the
+// timeout elapses, or ctx is canceled. It checks once immediately (fast path
+// for an already-up link) then polls every poll. The elapsed wait is observed
+// into carrierWaitSeconds on every return path and the carrier_up gauge is
+// updated. Returns nil on carrier up, errCarrierTimeout on timeout, or
+// ctx.Err() on cancellation.
+func (w *Watchdog) waitForCarrier(ctx context.Context, iface string, timeout, poll time.Duration) error {
+	start := time.Now()
+	defer func() {
+		w.m.carrierWaitSeconds.Observe(time.Since(start).Seconds())
+	}()
+
+	check := func() bool {
+		up := w.carrierFn(iface)
+		w.m.carrierUp.WithLabelValues(iface).Set(gauge01(up))
+		return up
+	}
+
+	if check() {
+		return nil
+	}
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errCarrierTimeout
+		case <-ticker.C:
+			if check() {
+				return nil
+			}
+		}
 	}
 }
 
