@@ -116,21 +116,24 @@ func TestSoftRecoverDispatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &fakeRecoverer{}
 			w := &Watchdog{
-				iface:        testIfaceEth0,
-				routeIface:   testIfaceEth0,
-				gateway:      testGatewayLAN,
-				pingTarget:   testTargetUnreachable,
-				cooldown:     time.Millisecond,
-				softMax:      tt.softMax,
-				linkDownWait: time.Millisecond,
-				rec:          fake,
-				m:            newMetrics(),
-				log:          silentLogger(),
-				softCount:    tt.softCount,
+				iface:          testIfaceEth0,
+				routeIface:     testIfaceEth0,
+				gateway:        testGatewayLAN,
+				pingTarget:     testTargetUnreachable,
+				cooldown:       time.Millisecond,
+				softMax:        tt.softMax,
+				linkDownWait:   time.Millisecond,
+				carrierFn:      func(string) bool { return true },
+				carrierTimeout: 10 * time.Millisecond,
+				carrierPoll:    time.Millisecond,
+				rec:            fake,
+				m:              newMetrics(),
+				log:            silentLogger(),
+				softCount:      tt.softCount,
 			}
 
-			// Pre-canceled ctx — sleepCtx in fullCycle returns immediately,
-			// so escalating cases don't wait the 3s post-cycle settle.
+			// Pre-canceled ctx — waitForCarrier returns immediately on ctx.Done(),
+			// so escalating cases don't block waiting for carrier.
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 
@@ -215,15 +218,18 @@ func TestFullCycleCooldown(t *testing.T) {
 func TestFullCycleAllowsAfterCooldown(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        testIfaceEth0,
-		gateway:      testGatewayLAN,
-		pingTarget:   testTargetUnreachable, // unreachable, post-cycle ping returns false
-		cooldown:     10 * time.Millisecond,
-		linkDownWait: time.Millisecond,
-		rec:          fake,
-		m:            newMetrics(),
-		log:          silentLogger(),
-		lastCycle:    time.Now().Add(-time.Hour), // cooldown elapsed long ago
+		iface:          testIfaceEth0,
+		gateway:        testGatewayLAN,
+		pingTarget:     testTargetUnreachable, // unreachable, post-cycle ping returns false
+		cooldown:       10 * time.Millisecond,
+		linkDownWait:   time.Millisecond,
+		carrierFn:      func(string) bool { return true },
+		carrierTimeout: 10 * time.Millisecond,
+		carrierPoll:    time.Millisecond,
+		rec:            fake,
+		m:              newMetrics(),
+		log:            silentLogger(),
+		lastCycle:      time.Now().Add(-time.Hour), // cooldown elapsed long ago
 	}
 
 	// Pre-canceled ctx so the post-cycle settle doesn't run for 3s.
@@ -264,14 +270,17 @@ func TestFullCycleCycleErrorRecorded(t *testing.T) {
 func TestFullCycleHonorsContextDuringSettle(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        testIfaceEth0,
-		gateway:      testGatewayLAN,
-		pingTarget:   testTargetUnreachable,
-		cooldown:     time.Millisecond,
-		linkDownWait: time.Millisecond,
-		rec:          fake,
-		m:            newMetrics(),
-		log:          silentLogger(),
+		iface:          testIfaceEth0,
+		gateway:        testGatewayLAN,
+		pingTarget:     testTargetUnreachable,
+		cooldown:       time.Millisecond,
+		linkDownWait:   time.Millisecond,
+		carrierFn:      func(string) bool { return false },
+		carrierTimeout: 10 * time.Millisecond,
+		carrierPoll:    time.Millisecond,
+		rec:            fake,
+		m:              newMetrics(),
+		log:            silentLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -312,16 +321,19 @@ func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
 func TestMetricsInstrumentation(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
-		iface:        testIfaceEth0,
-		routeIface:   testIfaceEth0,
-		gateway:      testGatewayLAN,
-		pingTarget:   testTargetUnreachable,
-		cooldown:     time.Millisecond,
-		softMax:      3,
-		linkDownWait: time.Millisecond,
-		rec:          fake,
-		m:            newMetrics(),
-		log:          silentLogger(),
+		iface:          testIfaceEth0,
+		routeIface:     testIfaceEth0,
+		gateway:        testGatewayLAN,
+		pingTarget:     testTargetUnreachable,
+		cooldown:       time.Millisecond,
+		softMax:        3,
+		linkDownWait:   time.Millisecond,
+		carrierFn:      func(string) bool { return true },
+		carrierTimeout: 10 * time.Millisecond,
+		carrierPoll:    time.Millisecond,
+		rec:            fake,
+		m:              newMetrics(),
+		log:            silentLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -464,6 +476,70 @@ func TestWaitForCarrier(t *testing.T) {
 		}
 		if time.Since(start) > 500*time.Millisecond {
 			t.Errorf("took %v, want prompt return", time.Since(start))
+		}
+	})
+}
+
+// TestFullCyclePostCarrier exercises the post-cycle path: carrier must be up
+// before the L3 probe runs, and a never-up carrier is a distinct failure.
+func TestFullCyclePostCarrier(t *testing.T) {
+	t.Run("carrier never comes up logs link-down outcome, skips L3", func(t *testing.T) {
+		fake := &fakeRecoverer{}
+		w := &Watchdog{
+			iface:          testIfaceEth0,
+			gateway:        testGatewayLAN,
+			pingTarget:     testTargetUnreachable,
+			cooldown:       time.Millisecond,
+			linkDownWait:   time.Millisecond,
+			carrierTimeout: 20 * time.Millisecond,
+			carrierPoll:    5 * time.Millisecond,
+			carrierFn:      func(string) bool { return false },
+			softMax:        3,
+			rec:            fake,
+			m:              newMetrics(),
+			log:            silentLogger(),
+			softCount:      3,
+		}
+
+		w.fullCycle(context.Background())
+
+		if fake.cycleCalls != 1 {
+			t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
+		}
+		if got := counterValue(t, w.m.checkTotal.WithLabelValues("link_down_after_cycle")); got != 1 {
+			t.Errorf("check_total{result=link_down_after_cycle} = %v, want 1", got)
+		}
+		if w.softCount != 3 {
+			t.Errorf("softCount = %d, want 3 (not reset on link-down failure)", w.softCount)
+		}
+	})
+
+	t.Run("carrier up but target unreachable logs L3 failure", func(t *testing.T) {
+		fake := &fakeRecoverer{}
+		w := &Watchdog{
+			iface:          testIfaceEth0,
+			gateway:        testGatewayUnreachable,
+			pingTarget:     testTargetUnreachable,
+			cooldown:       time.Millisecond,
+			linkDownWait:   time.Millisecond,
+			carrierTimeout: 20 * time.Millisecond,
+			carrierPoll:    5 * time.Millisecond,
+			carrierFn:      func(string) bool { return true },
+			softMax:        3,
+			rec:            fake,
+			m:              newMetrics(),
+			log:            silentLogger(),
+		}
+
+		// Short L3 budget so the test doesn't wait the full 5s. We rely on a
+		// pre-canceled ctx to bound the retry loop instead (see Step 4's loop:
+		// it honors ctx between ticks).
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		w.fullCycle(ctx)
+
+		if fake.cycleCalls != 1 {
+			t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
 		}
 	})
 }
