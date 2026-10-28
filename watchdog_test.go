@@ -385,7 +385,7 @@ func TestCheckCarrierSeam(t *testing.T) {
 	w := &Watchdog{
 		iface:        testIfaceEth0,
 		routeIface:   testIfaceEth0,
-		gateway:      testGatewayLAN,
+		gateway:      testGatewayUnreachable,
 		pingTarget:   testTargetUnreachable,
 		cooldown:     time.Millisecond,
 		softMax:      3,

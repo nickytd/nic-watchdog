@@ -18,4 +18,8 @@ const (
 	// testTargetUnreachable is in TEST-NET-1 (RFC 5737) — guaranteed
 	// unreachable, used as a deterministic ping-fail target.
 	testTargetUnreachable = "192.0.2.1"
+
+	// testGatewayUnreachable is in TEST-NET-2 (RFC 5737) — guaranteed
+	// unreachable, used to force check()'s carrier branch deterministically.
+	testGatewayUnreachable = "198.51.100.1"
 )
