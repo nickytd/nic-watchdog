@@ -246,7 +246,18 @@ func (w *Watchdog) softRecover(ctx context.Context) {
 // into carrierWaitSeconds on every return path and the carrier_up gauge is
 // updated. Returns nil on carrier up, errCarrierTimeout on timeout, or
 // ctx.Err() on cancellation.
+//
+// A non-positive timeout or poll falls back to the package defaults, so a
+// Watchdog built without seeding these fields can't drive time.NewTimer/
+// time.NewTicker with a zero interval (which would panic).
 func (w *Watchdog) waitForCarrier(ctx context.Context, iface string, timeout, poll time.Duration) error {
+	if timeout <= 0 {
+		timeout = defaultCarrierTimeout
+	}
+	if poll <= 0 {
+		poll = defaultCarrierPoll
+	}
+
 	start := time.Now()
 	defer func() {
 		w.m.carrierWaitSeconds.Observe(time.Since(start).Seconds())

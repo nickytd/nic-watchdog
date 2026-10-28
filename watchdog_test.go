@@ -478,6 +478,18 @@ func TestWaitForCarrier(t *testing.T) {
 			t.Errorf("took %v, want prompt return", time.Since(start))
 		}
 	})
+
+	// A zero timeout/poll (a Watchdog built without seeding carrierTimeout/
+	// carrierPoll) must fall back to the package defaults rather than driving
+	// time.NewTimer/time.NewTicker with 0, which panics. carrier is already up
+	// so the call returns via the fast path without actually waiting 20s.
+	t.Run("zero timeout and poll fall back to defaults", func(t *testing.T) {
+		w := &Watchdog{m: newMetrics(), log: silentLogger(),
+			carrierFn: func(string) bool { return true }}
+		if err := w.waitForCarrier(context.Background(), testIfaceEth0, 0, 0); err != nil {
+			t.Fatalf("waitForCarrier with zero timings = %v, want nil", err)
+		}
+	})
 }
 
 // TestFullCyclePostCarrier exercises the post-cycle path: carrier must be up
