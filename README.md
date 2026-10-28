@@ -128,12 +128,13 @@ Exposed series (excerpt — see `/metrics` for the full set, including free `go_
 | `nic_watchdog_external_reachable` | gauge | `target` | Primary alerting signal |
 | `nic_watchdog_gateway_reachable` | gauge | `gateway` | Distinguishes link-down from PHY TX failure |
 | `nic_watchdog_carrier_up` | gauge | `iface` | Cable / PHY presence |
-| `nic_watchdog_check_total` | counter | `result` | `ok` / `external_down` / `gateway_recovered_on_retry` / `both_down` |
+| `nic_watchdog_check_total` | counter | `result` | `ok` / `external_down` / `gateway_recovered_on_retry` / `both_down` / `link_down_after_cycle` |
 | `nic_watchdog_recovery_total` | counter | `step` | `flush` / `networkd_restart` / `cycle` |
 | `nic_watchdog_recovery_failure_total` | counter | `step` | Errors from each recovery step |
 | `nic_watchdog_soft_attempts` | gauge | — | Current soft counter |
 | `nic_watchdog_last_cycle_timestamp_seconds` | gauge | — | Unix time of the last full cycle |
 | `nic_watchdog_ping_duration_seconds` | histogram | `target`, `result` | Latency spikes correlate with PHY soft failures |
+| `nic_watchdog_carrier_wait_seconds` | histogram | — | Time waited for carrier after a full cycle; reveals real PHY relink timing |
 
 Minimal Prometheus scrape config:
 
