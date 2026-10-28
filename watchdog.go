@@ -306,19 +306,46 @@ func (w *Watchdog) fullCycle(ctx context.Context) {
 		return
 	}
 
-	if err := sleepCtx(ctx, 3*time.Second); err != nil {
-		w.log.Info("shutdown during post-cycle settle", slog.String("error", err.Error()))
+	if err := w.waitForCarrier(ctx, w.iface, w.carrierTimeout, w.carrierPoll); err != nil {
+		switch {
+		case ctx.Err() != nil:
+			w.log.Info("shutdown during post-cycle carrier wait", slog.String("error", err.Error()))
+		case errors.Is(err, errCarrierTimeout):
+			// Link never came back — a genuine L1/L2 failure, distinct from an
+			// L3 one. Do NOT reset softCount: the interface is still bad, so the
+			// next tick must keep escalating (same invariant as softRecover).
+			w.m.checkTotal.WithLabelValues("link_down_after_cycle").Inc()
+			w.log.Error("link failed to come up after cycle",
+				slog.Duration("timeout", w.carrierTimeout),
+			)
+		default:
+			w.log.Error("post-cycle carrier wait failed", slog.String("error", err.Error()))
+		}
 		return
 	}
 
-	switch {
-	case w.pingObs(ctx, roleTarget, w.pingTarget, 3*time.Second):
-		w.log.Info("connectivity restored after cycle")
-		w.softCount = 0
-		w.m.softAttempts.Set(0)
-	case w.pingObs(ctx, roleGateway, w.gateway, 3*time.Second):
-		w.log.Warn("gateway reachable after cycle, external still down — soft recovery will continue")
-	default:
-		w.log.Error("network still unreachable after cycle")
+	// Carrier is provably up. Retry L3 briefly to absorb ARP/neighbor warm-up
+	// and the switch's MAC-learning delay before declaring an L3 failure.
+	deadline := time.Now().Add(postCycleL3Budget)
+	for {
+		if w.pingObs(ctx, roleTarget, w.pingTarget, 2*time.Second) {
+			w.log.Info("connectivity restored after cycle")
+			w.softCount = 0
+			w.m.softAttempts.Set(0)
+			return
+		}
+		if w.pingObs(ctx, roleGateway, w.gateway, 2*time.Second) {
+			w.log.Warn("gateway reachable after cycle, external still down — soft recovery will continue")
+			return
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		if err := sleepCtx(ctx, postCycleL3Interval); err != nil {
+			w.log.Info("shutdown during post-cycle L3 retry", slog.String("error", err.Error()))
+			return
+		}
 	}
+
+	w.log.Error("network still unreachable after cycle")
 }
