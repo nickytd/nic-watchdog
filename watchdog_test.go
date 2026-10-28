@@ -377,9 +377,9 @@ func TestMetricsRecoveryFailure(t *testing.T) {
 }
 
 // TestCheckCarrierSeam verifies check() reads carrier through the injectable
-// carrierFn: when target+gateway are down but carrier is up and the gateway
-// becomes reachable on the longer retry, check() records the recovered path
-// instead of cycling.
+// carrierFn: when target and gateway are both unreachable, check() reaches the
+// carrier branch and sets the carrier_up gauge from carrierFn's result (rather
+// than the former direct hasCarrier call).
 func TestCheckCarrierSeam(t *testing.T) {
 	fake := &fakeRecoverer{}
 	w := &Watchdog{
