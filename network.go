@@ -67,18 +67,48 @@ func ping(ctx context.Context, addr string, timeout time.Duration) bool {
 		return false
 	}
 
+	// A datagram socket only unblocks a pending WriteTo/ReadFrom on its
+	// deadline — a canceled ctx that carries no deadline would otherwise wait
+	// out the full timeout. Watch ctx and collapse the deadline to "now" on
+	// cancellation so the blocked call returns immediately. The watcher is torn
+	// down via done on every return path, so it never leaks.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.SetDeadline(time.Now()) //nolint:errcheck // best-effort interrupt
+		case <-done:
+		}
+	}()
+
+	// Covers the already-canceled case deterministically, closing the window
+	// before the watcher goroutine is scheduled.
+	if ctx.Err() != nil {
+		return false
+	}
+
 	// On "udp4" mode, WriteTo expects a *net.UDPAddr; the port is unused.
 	if _, err := conn.WriteTo(b, &net.UDPAddr{IP: dst.IP}); err != nil {
 		return false
 	}
 
+	return readEchoReply(conn, dst.IP, seq)
+}
+
+// readEchoReply blocks reading from conn until it sees an ICMP Echo Reply from
+// want whose sequence number matches seq, returning true. It returns false on
+// the first read error — which includes the deadline firing, whether from the
+// ping timeout or a ctx-cancellation interrupt. Non-matching datagrams (wrong
+// peer, wrong type, stale seq) are skipped.
+func readEchoReply(conn *icmp.PacketConn, want net.IP, seq int) bool {
 	reply := make([]byte, 1500)
 	for {
 		n, peer, err := conn.ReadFrom(reply)
 		if err != nil {
 			return false
 		}
-		if !peerMatches(peer, dst.IP) {
+		if !peerMatches(peer, want) {
 			continue
 		}
 		rm, err := icmp.ParseMessage(1, reply[:n])

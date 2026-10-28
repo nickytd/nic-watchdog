@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -370,5 +371,32 @@ func TestPingLoopbackTimeout(t *testing.T) {
 	// kernel default ICMP timeouts.
 	if elapsed > 2*time.Second {
 		t.Errorf("ping took %v, expected < 2s (deadline ignored?)", elapsed)
+	}
+}
+
+// TestPingHonorsContextCancellation verifies ping returns promptly when its
+// context is canceled, rather than blocking for the full timeout. A canceled
+// context carries no deadline, so without an explicit interrupt the datagram
+// socket would wait out the whole timeout — the regression this guards against
+// (a multi-second shutdown tail when the recovery loop pings on a canceled ctx).
+func TestPingHonorsContextCancellation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires unprivileged ICMP socket")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // already canceled before the call
+
+	// Generous timeout: if cancellation were ignored, ping would block ~2s on
+	// this unreachable TEST-NET-1 target. A prompt return proves the ctx won.
+	start := time.Now()
+	ok := ping(ctx, testTargetUnreachable, 2*time.Second)
+	elapsed := time.Since(start)
+
+	if ok {
+		t.Errorf("ping on canceled ctx unexpectedly succeeded")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("ping took %v on canceled ctx, expected prompt return (<500ms)", elapsed)
 	}
 }
