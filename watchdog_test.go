@@ -554,4 +554,33 @@ func TestFullCyclePostCarrier(t *testing.T) {
 			t.Errorf("cycle calls = %d, want 1", fake.cycleCalls)
 		}
 	})
+
+	// The L3 retry loop must treat postCycleL3Budget as a real ceiling: with a
+	// canceled ctx the probes fail fast and the loop exits via sleepCtx well
+	// under the budget, never running the full postCycleL3Budget wall-clock.
+	t.Run("L3 retry loop stays within budget on canceled ctx", func(t *testing.T) {
+		fake := &fakeRecoverer{}
+		w := &Watchdog{
+			iface:          testIfaceEth0,
+			gateway:        testGatewayUnreachable,
+			pingTarget:     testTargetUnreachable,
+			cooldown:       time.Millisecond,
+			linkDownWait:   time.Millisecond,
+			carrierTimeout: 20 * time.Millisecond,
+			carrierPoll:    5 * time.Millisecond,
+			carrierFn:      func(string) bool { return true },
+			softMax:        3,
+			rec:            fake,
+			m:              newMetrics(),
+			log:            silentLogger(),
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		w.fullCycle(ctx)
+		if elapsed := time.Since(start); elapsed > postCycleL3Budget {
+			t.Errorf("fullCycle took %v, want well under budget %v on canceled ctx", elapsed, postCycleL3Budget)
+		}
+	})
 }
