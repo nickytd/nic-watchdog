@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+// Post-cycle gating timings. waitForCarrier blocks on L1/L2 up to the carrier
+// timeout (a ceiling, not a tuned sleep — it returns the instant carrier is
+// up), polling at the carrier poll interval. Once carrier is up, the L3 probe
+// retries for postCycleL3Budget, probing every postCycleL3Interval, to absorb
+// ARP/neighbor warm-up and switch MAC-learning delay.
+const (
+	defaultCarrierTimeout = 20 * time.Second
+	defaultCarrierPoll    = 250 * time.Millisecond
+	postCycleL3Budget     = 5 * time.Second
+	postCycleL3Interval   = 1 * time.Second
+)
+
 // recoverer performs the OS-level recovery actions. The default implementation
 // (osRecoverer) shells out to ip / systemctl; tests substitute a fake to
 // observe the state machine without touching the host.
@@ -33,18 +45,21 @@ func (osRecoverer) cycle(ctx context.Context, iface string, downWait time.Durati
 }
 
 type Watchdog struct {
-	iface         string
-	routeIface    string
-	pingTarget    string
-	gateway       string
-	checkInterval time.Duration
-	cooldown      time.Duration
-	softMax       int
-	linkDownWait  time.Duration
-	metricsAddr   string
+	iface          string
+	routeIface     string
+	pingTarget     string
+	gateway        string
+	checkInterval  time.Duration
+	cooldown       time.Duration
+	softMax        int
+	linkDownWait   time.Duration
+	carrierTimeout time.Duration
+	carrierPoll    time.Duration
+	metricsAddr    string
 
-	rec recoverer
-	m   *metrics
+	rec       recoverer
+	carrierFn func(iface string) bool
+	m         *metrics
 
 	softCount int
 	lastCycle time.Time
@@ -53,17 +68,20 @@ type Watchdog struct {
 
 func NewWatchdog(cfg Config, logger *slog.Logger) *Watchdog {
 	return &Watchdog{
-		iface:         cfg.Iface,
-		pingTarget:    cfg.PingTarget,
-		gateway:       cfg.Gateway,
-		checkInterval: cfg.CheckInterval,
-		cooldown:      cfg.Cooldown,
-		softMax:       cfg.SoftMax,
-		linkDownWait:  5 * time.Second,
-		metricsAddr:   cfg.MetricsAddr,
-		rec:           osRecoverer{},
-		m:             newMetrics(),
-		log:           logger,
+		iface:          cfg.Iface,
+		pingTarget:     cfg.PingTarget,
+		gateway:        cfg.Gateway,
+		checkInterval:  cfg.CheckInterval,
+		cooldown:       cfg.Cooldown,
+		softMax:        cfg.SoftMax,
+		linkDownWait:   5 * time.Second,
+		carrierTimeout: defaultCarrierTimeout,
+		carrierPoll:    defaultCarrierPoll,
+		metricsAddr:    cfg.MetricsAddr,
+		rec:            osRecoverer{},
+		carrierFn:      hasCarrier,
+		m:              newMetrics(),
+		log:            logger,
 	}
 }
 
@@ -166,7 +184,7 @@ func (w *Watchdog) check(ctx context.Context) {
 		return
 	}
 
-	carrier := hasCarrier(w.iface)
+	carrier := w.carrierFn(w.iface)
 	w.m.carrierUp.WithLabelValues(w.iface).Set(gauge01(carrier))
 	if carrier {
 		if w.pingObs(ctx, roleGateway, w.gateway, 5*time.Second) {
