@@ -14,12 +14,15 @@ import (
 // timeout (a ceiling, not a tuned sleep — it returns the instant carrier is
 // up), polling at the carrier poll interval. Once carrier is up, the L3 probe
 // retries for postCycleL3Budget, probing every postCycleL3Interval, to absorb
-// ARP/neighbor warm-up and switch MAC-learning delay.
+// ARP/neighbor warm-up and switch MAC-learning delay. Each probe's own timeout
+// is capped at postCycleL3ProbeTimeout and further shrunk to the budget left,
+// so the retry loop can't overshoot postCycleL3Budget by a full probe.
 const (
-	defaultCarrierTimeout = 20 * time.Second
-	defaultCarrierPoll    = 250 * time.Millisecond
-	postCycleL3Budget     = 5 * time.Second
-	postCycleL3Interval   = 1 * time.Second
+	defaultCarrierTimeout   = 20 * time.Second
+	defaultCarrierPoll      = 250 * time.Millisecond
+	postCycleL3Budget       = 5 * time.Second
+	postCycleL3Interval     = 1 * time.Second
+	postCycleL3ProbeTimeout = 2 * time.Second
 )
 
 // errCarrierTimeout signals waitForCarrier gave up before the PHY reported
@@ -336,16 +339,32 @@ func (w *Watchdog) fullCycle(ctx context.Context) {
 	}
 
 	// Carrier is provably up. Retry L3 briefly to absorb ARP/neighbor warm-up
-	// and the switch's MAC-learning delay before declaring an L3 failure.
+	// and the switch's MAC-learning delay before declaring an L3 failure. The
+	// per-probe timeout is capped to the budget left so the whole loop honors
+	// postCycleL3Budget as a real ceiling rather than overshooting by one or
+	// two full probe timeouts.
 	deadline := time.Now().Add(postCycleL3Budget)
 	for {
-		if w.pingObs(ctx, roleTarget, w.pingTarget, 2*time.Second) {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		probeTimeout := min(remaining, postCycleL3ProbeTimeout)
+
+		if w.pingObs(ctx, roleTarget, w.pingTarget, probeTimeout) {
 			w.log.Info("connectivity restored after cycle")
 			w.softCount = 0
 			w.m.softAttempts.Set(0)
 			return
 		}
-		if w.pingObs(ctx, roleGateway, w.gateway, 2*time.Second) {
+
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		probeTimeout = min(remaining, postCycleL3ProbeTimeout)
+
+		if w.pingObs(ctx, roleGateway, w.gateway, probeTimeout) {
 			w.log.Warn("gateway reachable after cycle, external still down — soft recovery will continue")
 			return
 		}
