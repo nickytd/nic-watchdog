@@ -408,13 +408,96 @@ func TestCheckCarrierSeam(t *testing.T) {
 		carrierFn:    func(string) bool { return true },
 	}
 
-	// gateway + target are both unreachable test addresses, so the retry ping
-	// also fails and we fall through to fullCycle. We assert carrierFn was the
-	// path taken by confirming carrierUp gauge was set to 1.
+	// gateway + target are both unreachable test addresses. Carrier reads up,
+	// so check() must suppress the cycle (remote outage). We assert carrierFn
+	// was the path taken by confirming the carrierUp gauge was set to 1.
 	w.check(context.Background())
 
 	if got := gaugeValue(t, w.m.carrierUp.WithLabelValues(testIfaceEth0)); got != 1 {
 		t.Errorf("carrier_up = %v, want 1 (check must read carrierFn)", got)
+	}
+}
+
+// carrierScript returns a carrierFn that yields the given booleans in order,
+// repeating the last value once the sequence is exhausted. Drives the
+// carrierDebouncedUp sampling loop deterministically.
+func carrierScript(seq ...bool) func(string) bool {
+	i := 0
+	return func(string) bool {
+		v := seq[i]
+		if i < len(seq)-1 {
+			i++
+		}
+		return v
+	}
+}
+
+func newBothDownWatchdog(fake *fakeRecoverer, carrierFn func(string) bool) *Watchdog {
+	return &Watchdog{
+		iface:          testIfaceEth0,
+		routeIface:     testIfaceEth0,
+		gateway:        testGatewayUnreachable,
+		pingTarget:     testTargetUnreachable,
+		cooldown:       time.Millisecond,
+		softMax:        3,
+		linkDownWait:   time.Millisecond,
+		carrierTimeout: 10 * time.Millisecond,
+		carrierPoll:    time.Millisecond,
+		rec:            fake,
+		m:              newMetrics(),
+		log:            silentLogger(),
+		carrierFn:      carrierFn,
+	}
+}
+
+// TestCheckCarrierUpSuppressesCycle: target + gateway down but carrier reads up
+// on every debounce sample → remote outage. check() must NOT cycle and must
+// count remote_down_carrier_up.
+func TestCheckCarrierUpSuppressesCycle(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := newBothDownWatchdog(fake, carrierScript(true, true, true))
+
+	w.check(context.Background())
+
+	if fake.cycleCalls != 0 {
+		t.Errorf("cycleCalls = %d, want 0 (carrier up must suppress the cycle)", fake.cycleCalls)
+	}
+	if got := counterValue(t, w.m.checkTotal.WithLabelValues("remote_down_carrier_up")); got != 1 {
+		t.Errorf("check_total{result=remote_down_carrier_up} = %v, want 1", got)
+	}
+}
+
+// TestCheckCarrierDownCycles: carrier reads down on the first sample →
+// short-circuit to the L1/L2 fault path. check() must cycle and count
+// carrier_down.
+func TestCheckCarrierDownCycles(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := newBothDownWatchdog(fake, carrierScript(false))
+
+	w.check(context.Background())
+
+	if fake.cycleCalls != 1 {
+		t.Errorf("cycleCalls = %d, want 1 (carrier down must cycle)", fake.cycleCalls)
+	}
+	if got := counterValue(t, w.m.checkTotal.WithLabelValues("carrier_down")); got != 1 {
+		t.Errorf("check_total{result=carrier_down} = %v, want 1", got)
+	}
+}
+
+// TestCheckCarrierFlapCycles is the regression guard for the PHY-bounce case:
+// carrier reads up first but down on a later sample. The debounce must treat a
+// flapping link as down and cycle, not suppress.
+func TestCheckCarrierFlapCycles(t *testing.T) {
+	fake := &fakeRecoverer{}
+	w := newBothDownWatchdog(fake, carrierScript(true, false))
+
+	w.check(context.Background())
+
+	if fake.cycleCalls != 1 {
+		t.Errorf("cycleCalls = %d, want 1 (flapping carrier must cycle, not suppress)", fake.cycleCalls)
+	}
+	if got := counterValue(t, w.m.checkTotal.WithLabelValues("carrier_down")); got != 1 {
+		t.Errorf("check_total{result=carrier_down} = %v, want 1", got)
 	}
 }
 
