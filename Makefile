@@ -5,24 +5,31 @@ GOARCH   ?= $(shell go env GOARCH)
 
 .PHONY: fmt lint license check tidy build clean deploy
 
+# Developer tools live in a separate module (tools/go.mod) so their large
+# dependency tree stays out of the application module. `-modfile` sources each
+# tool binary from tools/go.mod while keeping the main module as the active
+# context, so package patterns like ./... still resolve to the app packages.
+TOOL := go tool -modfile=$(ROOT_DIR)/tools/go.mod
+
 fmt:
 	gofmt -s -w $(ROOT_DIR)
-	goimports -w $(ROOT_DIR)
+	$(TOOL) goimports -w $(ROOT_DIR)
 
 lint:
-	go tool golangci-lint run $(ROOT_DIR)/...
+	$(TOOL) golangci-lint run $(ROOT_DIR)/...
 
 license:
-	go tool addlicense -s=only -c "nickytd" -l apache $(ROOT_DIR)/*.go
+	$(TOOL) addlicense -s=only -c "nickytd" -l apache $(ROOT_DIR)/*.go
 
 license-check:
-	go tool addlicense -s=only -c "nickytd" -l apache -check $(ROOT_DIR)/*.go
+	$(TOOL) addlicense -s=only -c "nickytd" -l apache -check $(ROOT_DIR)/*.go
 
 check: fmt lint license
 	go fix $(ROOT_DIR)/...
 
 tidy:
 	go mod tidy
+	go -C $(ROOT_DIR)/tools mod tidy
 
 build: check
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(ROOT_DIR)/bin/$(BINARY) $(ROOT_DIR)

@@ -20,7 +20,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Lint
-        run: go tool golangci-lint run ./...
+        run: make lint
 
       - name: Test
         run: go test -v -race ./...
