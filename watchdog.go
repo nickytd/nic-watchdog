@@ -25,6 +25,18 @@ const (
 	postCycleL3ProbeTimeout = 2 * time.Second
 )
 
+// Carrier debounce timings for the both-down gate in check(). Before
+// suppressing a cycle on a healthy link, carrier is sampled up to
+// carrierDebounceSamples times at carrierDebounceInterval. The sampling
+// short-circuits on the first down read, so this latency (worst case
+// ~(samples-1) * interval) is only paid when the link is genuinely up — the
+// case where we would suppress. A flapping PHY (the BCM link-drop bug, which
+// bounces carrier) yields at least one down sample and still cycles.
+const (
+	carrierDebounceSamples  = 3
+	carrierDebounceInterval = 200 * time.Millisecond
+)
+
 // errCarrierTimeout signals waitForCarrier gave up before the PHY reported
 // carrier — a genuine "link never came back" failure, distinct from an L3 one.
 var errCarrierTimeout = errors.New("carrier did not come up before timeout")
@@ -192,18 +204,61 @@ func (w *Watchdog) check(ctx context.Context) {
 		return
 	}
 
-	carrier := w.carrierFn(w.iface)
-	w.m.carrierUp.WithLabelValues(w.iface).Set(gauge01(carrier))
-	if carrier {
+	// Target and gateway are both unreachable. Whether a full cycle can help
+	// depends entirely on L1/L2: a cycle only recovers a PHY link-drop (the BCM
+	// bug this daemon exists for, which drops carrier). If carrier is up, the
+	// link is healthy and the outage is remote — cycling a healthy NIC there is
+	// all cost (it can sever in-flight TCP sessions, e.g. a krbd mount, turning
+	// a transient remote blip into a sticky emergency_ro filesystem). Gate the
+	// cycle on carrier being down, read with a debounce so a flapping PHY still
+	// cycles.
+	if w.carrierDebouncedUp(ctx) {
+		// Link is healthy at L1/L2. One optional 5s gateway retry to catch a
+		// slow neighbor, then bail to the soft/backoff path — never cycle.
 		if w.pingObs(ctx, roleGateway, w.gateway, 5*time.Second) {
 			w.m.checkTotal.WithLabelValues("gateway_recovered_on_retry").Inc()
 			w.log.Info("gateway reachable on retry", slog.String(roleGateway, w.gateway))
 			return
 		}
+		w.m.checkTotal.WithLabelValues("remote_down_carrier_up").Inc()
+		w.log.Warn("target and gateway unreachable but carrier is up — remote outage, suppressing interface cycle",
+			slog.String(roleTarget, w.pingTarget),
+			slog.String(roleGateway, w.gateway),
+		)
+		return
 	}
 
-	w.m.checkTotal.WithLabelValues("both_down").Inc()
+	// Carrier is down — the L1/L2 PHY fault the cycle exists to fix.
+	w.m.checkTotal.WithLabelValues("carrier_down").Inc()
 	w.fullCycle(ctx)
+}
+
+// carrierDebouncedUp samples carrierFn up to carrierDebounceSamples times at
+// carrierDebounceInterval and reports whether every sample observed carrier.
+// It short-circuits to false on the first sample that reads down, so a
+// genuinely healthy link is the only thing that returns true; a flapping PHY
+// (carrier bouncing up/down) yields a down sample and returns false, keeping
+// the cycle available for the link-drop bug recovery depends on. The carrier_up
+// gauge is updated from each read. If ctx is canceled mid-sleep the loop stops
+// early and returns the most recent observation — a canceled run is shutting
+// down and the result does not drive a cycle (check() is not re-entered).
+func (w *Watchdog) carrierDebouncedUp(ctx context.Context) bool {
+	up := w.carrierFn(w.iface)
+	w.m.carrierUp.WithLabelValues(w.iface).Set(gauge01(up))
+	if !up {
+		return false
+	}
+	for range carrierDebounceSamples - 1 {
+		if err := sleepCtx(ctx, carrierDebounceInterval); err != nil {
+			return up
+		}
+		up = w.carrierFn(w.iface)
+		w.m.carrierUp.WithLabelValues(w.iface).Set(gauge01(up))
+		if !up {
+			return false
+		}
+	}
+	return up
 }
 
 func (w *Watchdog) softRecover(ctx context.Context) {
