@@ -23,6 +23,14 @@
       "semanticCommitScope": "deps"
     },
     {
+      "description": "Developer tools live in tools/go.mod — group their updates separately from runtime deps so noisy tool bumps (linters, test runners) are reviewed apart from the application's modules.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["tools/go.mod"],
+      "groupName": "go tools",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "tools"
+    },
+    {
       "description": "Group GitHub Actions updates separately.",
       "matchManagers": ["github-actions"],
       "groupName": "github-actions",
