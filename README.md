@@ -24,14 +24,17 @@ No upstream fix is available.
 
 ## How it works
 
-`nic-watchdog` runs as a long-lived systemd service and checks external connectivity via ICMP ping every 10 seconds. When a failure is detected, it distinguishes between a full link-down (both gateway and external unreachable) and a partial TX failure (gateway reachable but external is not), then escalates recovery:
+`nic-watchdog` runs as a long-lived systemd service and checks external connectivity via ICMP ping every 10 seconds. When a failure is detected, it distinguishes a partial TX failure (gateway reachable but external is not) from a full both-down condition, and in the both-down case uses the kernel carrier state to tell a local link fault apart from a purely remote outage, then escalates recovery:
 
 | Step | Condition | Action |
 |------|-----------|--------|
 | 1 | Gateway up, external down | Flush ARP cache and route cache |
 | 2 | Still down after step 1 | Restart `systemd-networkd` |
 | 3 | Still down after step 2 | Full interface down/up cycle |
-| — | Both gateway and external down | Full interface down/up cycle immediately |
+| — | Both down, **carrier down** | Full interface down/up cycle immediately |
+| — | Both down, **carrier up** | Remote outage — suppress the cycle, stay in the soft/backoff path |
+
+Carrier is read with a short debounce, so a flapping PHY (carrier bouncing) still triggers a cycle while a consistently healthy link does not. Cycling a NIC whose link is up cannot fix an outage outside the box and can sever in-flight sessions (e.g. a krbd mount), so it is suppressed.
 
 A cooldown (default 10 minutes) prevents repeated full cycles. All state is in-memory — no files in `/run`.
 
