@@ -3,12 +3,10 @@ BINARY   := nic-watchdog
 GOOS     ?= linux
 GOARCH   ?= $(shell go env GOARCH)
 
-.PHONY: fmt lint license check tidy build clean deploy
+.PHONY: fmt lint license check test tidy build clean deploy
 
 # Developer tools live in a separate module (tools/go.mod) so their large
-# dependency tree stays out of the application module. `-modfile` sources each
-# tool binary from tools/go.mod while keeping the main module as the active
-# context, so package patterns like ./... still resolve to the app packages.
+# dependency tree stays out of the application module.
 TOOL := go tool -modfile=$(ROOT_DIR)/tools/go.mod
 
 fmt:
@@ -23,6 +21,9 @@ license:
 
 license-check:
 	$(TOOL) addlicense -s=only -c "nickytd" -l apache -check $(ROOT_DIR)/*.go
+
+test:
+	$(TOOL) gotestsum -- -race $(ROOT_DIR)/...
 
 check: fmt lint license
 	go fix $(ROOT_DIR)/...
