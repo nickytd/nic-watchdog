@@ -35,8 +35,7 @@ No upstream fix is available.
 
 Carrier state is recorded (`nic_watchdog_carrier_up`) but does **not** gate the
 cycle: on the BCM54213PE carrier can read up while L2 is silently dead, so a
-both-down condition always escalates to a cycle (see issue #21). The cooldown
-(default 10 minutes) prevents repeated full cycles.
+both-down condition always escalates to a cycle (see issue #21).
 
 A cooldown (default 10 minutes) prevents repeated full cycles. All state is in-memory — no files in `/run`.
 
